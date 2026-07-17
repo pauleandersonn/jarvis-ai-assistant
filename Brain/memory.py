@@ -108,14 +108,17 @@ def get_global_context() -> str:
     project_lines = "\n".join(f"- {p['name']} (`/projeto {p['slug']}`)" for p in projects)
     decisions = _safe_read(_MEMORY_DIR / "decisions.md")
     tasks = _safe_read(_MEMORY_DIR / "tasks.md")
+    persona = _safe_read(_MEMORY_DIR / "jarvis-persona.md")
 
     # Cap to keep prompts reasonable.
     decisions_short = decisions[:1500]
     tasks_short = tasks[:1000]
+    persona_short = persona[:2000]
 
     return (
         "CONTEXTO GLOBAL DO JARVIS (memória persistente):\n\n"
         f"Projetos conhecidos do usuário:\n{project_lines}\n\n"
+        f"Constituição cognitiva (persona):\n{persona_short}\n\n"
         f"Decisões globais recentes:\n{decisions_short}\n\n"
         f"Tarefas globais pendentes:\n{tasks_short}\n"
     )

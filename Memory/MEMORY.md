@@ -27,6 +27,7 @@ Cada projeto tem um arquivo próprio em `./Projects/<slug>.md`.
 
 ## Índice de seções
 
+- `jarvis-persona.md` — constituição cognitiva do JARVIS (prompt expandido, raciocínio, especialidade, limites)
 - `Projects/` — um arquivo `.md` por projeto (objetivo, tarefas, decisões, próximos passos)
 - `decisions.md` — log de decisões importantes (cross-project)
 - `tasks.md` — tarefas pendentes globais
@@ -37,6 +38,7 @@ Cada projeto tem um arquivo próprio em `./Projects/<slug>.md`.
 2. Se a pergunta menciona um projeto (direta ou indiretamente), carrega o arquivo do projeto.
 3. Respostas incorporam o contexto encontrado aqui.
 4. Quando algo novo surge, JARVIS atualiza o arquivo apropriado.
+5. **Antes de responder**, JARVIS consulta `jarvis-persona.md` para alinhar tom, raciocínio e formato.
 
 ## Última atualização
 2026-07-16 — Estrutura inicial criada.
