@@ -47,6 +47,8 @@ stop-jarvis.bat
 where-is-jarvis.ps1
 create-shortcut.ps1
 create-stop-shortcut.ps1
+install-autostart.ps1
+quick-start.ps1
 
 # Generated images (TextToImage/Generated/*.jpg são output do Pollinations)
 TextToImage/Generated/
