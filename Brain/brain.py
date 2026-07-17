@@ -192,6 +192,43 @@ def _ask_freeai(text: str) -> str:
         return f"AI brain error: {exc}"
 
 
+# ---- Helpers de localizacao e interceptacao de clima ----
+_CLIMA_KEYWORDS = (
+    "clima", "tempo", "temperatura", "previsao",
+    "vai chover", "frio", "calor", "weather",
+)
+
+
+def _is_weather_question(text: str) -> bool:
+    """Detecta se a pergunta e sobre clima/tempo."""
+    t = (text or "").lower().strip()
+    return any(k in t for k in _CLIMA_KEYWORDS)
+
+
+def _get_location_hint() -> str:
+    """Le a localizacao cacheada (seta por dashboard.py via ipapi.co)."""
+    try:
+        import os as _os
+        return _os.environ.get("JARVIS_DETECTED_LOCATION", "")
+    except Exception:
+        return ""
+
+
+def _weather_hint_block() -> str:
+    """Bloco que injeta localizacao no system prompt.
+    Resolve o problema do FreeAI responder 'nao tenho acesso a localizacao'.
+    """
+    loc = _get_location_hint()
+    if not loc:
+        return ""
+    return (
+        f"[CONTEXTO DO USUARIO] O usuario esta em {loc}. "
+        "Quando ele perguntar sobre clima/tempo/temperatura, USE esta localizacao - "
+        "nao diga que nao tem acesso. Para dados precisos, recomende o botao Clima "
+        "do dashboard (usa wttr.in).\n\n"
+    )
+
+
 def _build_prompt(text: str) -> str:
     """Compose the full prompt sent to FreeAI.
 
@@ -202,6 +239,11 @@ def _build_prompt(text: str) -> str:
       [user message + PT instruction]
     """
     parts = [JARVIS_SYSTEM]
+
+    # Injeta localizacao detectada (resolve "nao tenho acesso a localizacao")
+    loc_block = _weather_hint_block()
+    if loc_block:
+        parts.append(loc_block)
 
     global_ctx = get_global_context()
     if global_ctx:

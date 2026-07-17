@@ -1,0 +1,5 @@
+Set-Location 'C:\Users\paule\Projects\jarvis-ai-assistant'
+git add -A
+git commit -m 'feat: detectar localizacao por IP + injetar no system prompt'
+git commit --amend -m 'feat: detectar localizacao por IP + injetar no system prompt' -m 'Resolve definitivamente o problema do FreeAI responder "Eu nao tenho acesso a sua localizacao" quando o usuario pergunta sobre clima.' -m '* dashboard.py: _detect_location() via ipapi.co em thread background. Cache em LOCATION_CACHE + env var JARVIS_DETECTED_LOCATION. Endpoint /api/status retorna location.' -m '* Brain/brain.py: _CLIMA_KEYWORDS + _is_weather_question() + _weather_hint_block() + _get_location_hint(). _build_prompt() injeta o hint automaticamente. FreeAI passa a saber a cidade do usuario.' -m 'Testado: GET /api/status retorna {location: {city: Manaus, region: Amazonas, country: Brazil}}.'
+git push origin main

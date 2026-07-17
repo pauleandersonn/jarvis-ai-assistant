@@ -1,2 +1,0 @@
-TEXT: 'Eu não tenho acesso à sua localização, então não posso fornecer a previsão do tempo específica para você. Por favor, verifique um aplicativo de clima ou site meteorológico local para obter as informações mais precisas.'
-CLEAN: 'Eu não tenho acesso à sua localização, então não posso fornecer a previsão do tempo específica para você. Por favor, verifique um aplicativo de clima ou site meteorológico local para obter as informações mais precisas.'

@@ -31,6 +31,50 @@ import pyaudio  # resolves to the sounddevice-based shim in this project
 # Track when we started, for the "uptime" tile.
 STARTED_AT = time.time()
 
+# ---- Geolocalizacao por IP (silencioso, com cache por uptime) ----
+LOCATION_CACHE: dict = {"city": None, "region": None, "country": None}
+
+
+def _detect_location() -> dict:
+    """Detecta a cidade via IP publico (ipapi.co). Roda em thread na inicializacao.
+
+    Retorna dict vazio se falhar. Cacheia no module scope para nao chamar de novo.
+    """
+    try:
+        import urllib.request, json as _json
+        req = urllib.request.Request(
+            "https://ipapi.co/json/",
+            headers={"User-Agent": "JARVIS-AI-Assistant/2.6"},
+        )
+        with urllib.request.urlopen(req, timeout=4) as r:
+            data = _json.loads(r.read().decode("utf-8"))
+        return {
+            "city": data.get("city"),
+            "region": data.get("region"),
+            "country": data.get("country_name"),
+        }
+    except Exception:
+        return {}
+
+
+def _start_location_detection() -> None:
+    """Dispara deteccao de localizacao em background (nao bloqueia startup).
+
+    Quando detecta, salva tambem em JARVIS_DETECTED_LOCATION (env var) para que
+    Brain/brain.py possa injetar no system prompt do FreeAI.
+    """
+    import threading, os
+    def _worker():
+        loc = _detect_location()
+        if loc.get("city"):
+            LOCATION_CACHE.update(loc)
+            hint = f"{loc['city']}-{loc.get('region', '')}, {loc.get('country', 'BR')}".strip(" ,-")
+            os.environ["JARVIS_DETECTED_LOCATION"] = hint
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+_start_location_detection()
+
 # File the brain appends to. We surface its contents in the UI.
 CHAT_LOG = PROJECT_DIR / "chat_hystory.txt"
 LOG_FILE = PROJECT_DIR / "log.txt"
@@ -192,6 +236,7 @@ def status() -> JSONResponse:
     return JSONResponse({
         "uptime_seconds": uptime,
         "started_at": datetime.fromtimestamp(STARTED_AT).strftime("%Y-%m-%d %H:%M:%S"),
+        "location": dict(LOCATION_CACHE),
         "mic": {"name": mic_name, "devices": mic_count, "ok": mic_count > 0},
         "volume": volume_pct,
         "brightness": brightness_pct,
