@@ -41,6 +41,18 @@ function muteToggle() {
 // Aplica estado salvo o quanto antes (antes de qualquer fala)
 muteApplyClass();
 
+// ───────── Voice hint helpers ─────────
+// Mensagem curta mostrada dentro do card central, atualizada durante
+// a fase de síntese e durante a reprodução do WAV.
+function showVoiceHint(msg) {
+  const el = document.getElementById("voice-hint");
+  if (el) el.textContent = msg;
+}
+function hideVoiceHint() {
+  const el = document.getElementById("voice-hint");
+  if (el) el.textContent = "";
+}
+
 // Bind do clique no botão da topbar
 document.addEventListener("DOMContentLoaded", () => {
   const btn = document.getElementById("mute-toggle");
@@ -494,10 +506,6 @@ function ttsStop() {
   TTS.currentUtterance = null;
 }
 
-function ttsIsAvailable() {
-  return !!(window.speechSynthesis && ttsSelectVoice());
-}
-
 async function ttsSpeak(text) {
   if (!text) return { ok: false, reason: "empty" };
   if (muteGet()) {
@@ -505,66 +513,119 @@ async function ttsSpeak(text) {
     return { ok: false, reason: "muted" };
   }
 
-  // Fallback pra SAPI5 do Windows se o browser nao tiver TTS nativo
-  if (!ttsIsAvailable()) {
-    return await ttsSpeakViaBackend(text);
-  }
-
-  return new Promise((resolve) => {
-    // Cancela qualquer fala em curso
-    ttsStop();
-
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = "pt-BR";
-    if (TTS.voice) u.voice = TTS.voice;
-    u.rate = 1.0;
-    u.pitch = 1.0;
-    u.volume = 1.0;
-
-    u.onend = () => {
-      TTS.currentUtterance = null;
-      resolve({ ok: true, engine: "browser", duration: 0 });
-    };
-    u.onerror = (e) => {
-      TTS.currentUtterance = null;
-      // "interrupted" ou "canceled" nao sao erros reais
-      if (e.error === "interrupted" || e.error === "canceled") {
-        resolve({ ok: false, reason: e.error });
-      } else {
-        // Erro real: tenta fallback SAPI5
-        ttsSpeakViaBackend(text).then(resolve);
-      }
-    };
-
-    TTS.currentUtterance = u;
-    window.speechSynthesis.speak(u);
-  });
+  // Caminho primário: SAPI5 do Windows. O servidor APENAS gera o WAV
+  // (audio/wav bytes); a REPRODUÇÃO acontece aqui via HTMLAudioElement.
+  // Garante a MESMA voz em Chrome, Edge, Firefox, Opera, sem depender
+  // de speechSynthesis (que tem quirks: voices sumindo, utterance truncado,
+  // callbacks que nao disparam em texto longo).
+  return await ttsSpeakViaBackend(text);
 }
 
-// Fallback: SAPI5 do Windows via /api/speak (WAV binario)
+// Caminho primário: SAPI5 do Windows via /api/speak.
+// Servidor retorna audio/wav em bytes; frontend toca via HTMLAudioElement.
+// Suporta qualquer browser moderno (Chrome, Edge, Firefox, Opera).
 async function ttsSpeakViaBackend(text) {
   if (muteGet()) {
     if (window.JARVIS_DEBUG) console.log("[tts-backend] suprimido (mudo)");
     return { ok: false, reason: "muted" };
   }
+
+  // Marca estado ANTES de qualquer rede: usuario precisa de feedback
+  // imediato enquanto o servidor sintetiza o WAV.
+  setState("thinking");
+  if (typeof showVoiceHint === "function") {
+    showVoiceHint("Gerando voz...");
+  }
+
+  let resp, blob, dur;
   try {
-    const r = await fetch("/api/speak", {
+    resp = await fetch("/api/speak", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
-    if (!r.ok) return { ok: false, reason: "backend_fail" };
-    const blob = await r.blob();
-    return new Promise((resolve) => {
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audio.onended = () => { URL.revokeObjectURL(url); resolve({ ok: true, engine: "sapi5" }); };
-      audio.onerror = () => { URL.revokeObjectURL(url); resolve({ ok: false, reason: "audio_play_fail" }); };
-      audio.play().catch(() => resolve({ ok: false, reason: "play_blocked" }));
-    });
+    if (!resp.ok) {
+      const detail = await safeReadJson(resp);
+      throw new Error(
+        "speak HTTP " + resp.status + (detail && detail.reason ? " - " + detail.reason : "")
+      );
+    }
+    // Verifica que e audio/wav
+    const ctype = resp.headers.get("Content-Type") || "";
+    if (!ctype.startsWith("audio/")) {
+      throw new Error("backend devolveu content-type errado: " + ctype);
+    }
+    blob = await resp.blob();
+    dur = parseFloat(resp.headers.get("X-Jarvis-Duration") || "0") || 0;
   } catch (e) {
-    return { ok: false, reason: e.message };
+    console.error("[tts-backend] erro na requisicao:", e);
+    return { ok: false, reason: e.message || "fetch_fail" };
   }
+
+  // WAV chegou. Agora toca no navegador.
+  setState("speaking");
+  if (typeof showVoiceHint === "function") {
+    showVoiceHint("Respondendo...");
+  }
+
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.volume = 1.0;
+    audio.preload = "auto";
+
+    const cleanup = () => {
+      try { URL.revokeObjectURL(url); } catch (err) { /* noop */ }
+      if (state.currentAudio === audio) state.currentAudio = null;
+      clearTimeout(state.speechTimer);
+    };
+
+    audio.onended = () => {
+      cleanup();
+      if (typeof hideVoiceHint === "function") hideVoiceHint();
+      setState("idle");
+      resolve({ ok: true, engine: "sapi5", duration: dur });
+    };
+    audio.onerror = (ev) => {
+      console.error("[tts-backend] audio error:", ev);
+      cleanup();
+      setState("idle");
+      resolve({ ok: false, reason: "audio_play_fail" });
+    };
+
+    state.currentAudio = audio;
+    const p = audio.play();
+    if (p && typeof p.then === "function") {
+      p.catch((err) => {
+        console.error("[tts-backend] audio.play() rejeitado:", err);
+        // Autoplay policy: precisa de gesture (clique do usuario).
+        const hint = document.getElementById("voice-hint");
+        if (hint) {
+          hint.textContent =
+            "⚠ Clique em 'Ativar audio' (acima do microfone) para liberar o som do navegador.";
+        }
+        cleanup();
+        setState("idle");
+        resolve({ ok: false, reason: "play_blocked" });
+      });
+    }
+
+    // Safety timer: se audio.onended nunca dispara (WAV corrompido),
+    // ainda assim finaliza o estado depois de dur + 3s.
+    clearTimeout(state.speechTimer);
+    state.speechTimer = setTimeout(() => {
+      if (state.currentAudio === audio) {
+        try { audio.pause(); } catch (e) { /* noop */ }
+      }
+      cleanup();
+      setState("idle");
+      resolve({ ok: false, reason: "timeout" });
+    }, (dur + 3) * 1000);
+  });
+}
+
+async function safeReadJson(resp) {
+  try { return await resp.json(); } catch { return null; }
 }
 
 async function speakArbitrary(text) {

@@ -1,21 +1,18 @@
-"""Text-to-speech + playback using Windows native SAPI5 + os.startfile.
+"""Text-to-speech WAV generator using Windows native SAPI5 (no local playback).
 
-We replaced the original `playsound==1.2.2` (which deadlocks on
-Python 3.13+) and `os.startfile` (which spawned Windows Media Player
-and accumulated instances in background, causing the "same audio
-loop" bug) with `sounddevice` + `wave` stdlib: the WAV is played in a
-Python thread directly through the default audio device, no external
-player, no instance leak.
-
-We create a fresh `SAPI.SpVoice` instance on every call instead of
-caching one. Caching leads to COM error 0x80010008 ("Exception") when
-another module on the same process also uses SAPI5.
-
-Threads spawned by FastAPI / uvicorn need `CoInitialize` before they
-can touch COM objects; we wrap SAPI calls in a helper that does this.
-
-We explicitly set Volume=100 and Rate=0 on every fresh instance to
-defeat any leftover state from the SAPI5 defaults.
+Contrato:
+ - O servidor APENAS gera o audio (WAV em disco) — nunca reproduz no host.
+ - O navegador baixa o WAV via `/api/speak` e toca via HTMLAudioElement.
+ - Substituimos `playsound` (deadlock no Py 3.13+), `os.startfile` (acumulava
+   instancias do Windows Media Player) e `sounddevice.play` (tocava no servidor,
+   nao no cliente). Agora o TTS so escreve o WAV — quem toca e o navegador.
+ - Usamos `SAPI.SpFileStream` + `SAPI.SpVoice.Speak` sincrono para escrever
+   o WAV completo antes de devolver o path.
+ - Cada chamada cria uma instancia nova de `SpVoice` (cache leva a
+   COM error 0x80010008 quando outro modulo tambem usa SAPI5).
+ - Threads do FastAPI/uvicorn precisam de `CoInitialize` antes de tocar COM.
+ - Volume fixo em 100, Rate=0.
+ - Voz: tenta Portuguese/Brasil primeiro, cai pra default se nao houver.
 """
 
 import os
@@ -210,117 +207,20 @@ def speak_to_file(text: str) -> str:
 
 
 def speak_with_audio(text: str, audio_file: str | None = None) -> str:
-    """Render `text` to a WAV file, then play it via os.startfile.
+    """[DEPRECIADO] Mantido por retrocompat — apenas chama `speak_to_file()`.
 
-    This is the proven reliable path: SAPI5 writes a WAV, Windows
-    opens it with the default player, audio comes out. Direct SAPI5
-    playback silently fails inside the uvicorn worker process.
+    Historicamente esta funcao reproduzia o WAV no servidor via sounddevice.
+    Isso esta errado para uma aplicacao web: o audio tocava na maquina onde o
+    servidor roda, nao onde o usuario esta. Agora a geracao acontece aqui mas
+    a REPRODUCAO e responsabilidade do navegador — o WAV e devolvido por
+    `/api/speak` e tocado pelo frontend via HTMLAudioElement.
+
+    Para o caminho antigo (CLI local, fora do navegador) use `speak_to_file()`
+    + um player externo, ou use diretamente `speaker.Speak(...)`.
     """
-    print(f"[tts] speak_with_audio: len={len(text or '')}")
-    clean = _clean_for_speech(text)
-    if not clean:
-        print("[tts] skip: empty after clean")
-        return "Nothing to say."
-
-    # Bloqueia meta-fala (LLM falando sobre si mesmo em vez de responder).
-    if _has_meta_content(clean):
-        print(f"[tts] skip: meta-content detected")
-        return f"[skip meta-talk: {clean[:80]}...]"
-
-    # Encurta respostas longas pra nao gerar WAVs gigantes.
-    clean = _smart_truncate(clean, max_chars=600)
-
-    speaker = None
-    stream = None
-    try:
-        wav_path = (
-            pathlib.Path(audio_file) if audio_file
-            else TMP_DIR / f"jarvis_{int(time.time()*1000)}.wav"
-        )
-        wav_path.parent.mkdir(parents=True, exist_ok=True)
-        print(f"[tts] target wav: {wav_path}")
-
-        speaker = _new_speaker()
-        stream = win32com.client.Dispatch("SAPI.SpFileStream")
-        # 22 = 16-bit 16 kHz mono (good balance of size and clarity).
-        stream.Format.Type = 22
-        # 3 = SSFMCreateForWrite
-        stream.Open(str(wav_path), 3, False)
-        speaker.AudioOutputStream = stream
-        # SVSFlagsAsync would let us return early; we use sync (0) so we
-        # know the WAV is fully written before we hand it to the player.
-        speaker.Speak(clean, 0)
-        stream.Close()
-        stream = None
-        speaker.AudioOutputStream = None
-        print(f"[tts] wav written: size={wav_path.stat().st_size if wav_path.exists() else 0}")
-
-        # Reproduz o WAV DIRETAMENTE via sounddevice (sem abrir player externo).
-        # Antes usavamos os.startfile(), que abria o Windows Media Player toda vez
-        # e acumulava instancias em background tocando o mesmo audio em loop.
-        _play_wav_blocking(str(wav_path))
-        print(f"[tts] playback OK: {wav_path}")
-        return f"Played: {wav_path}"
-    except Exception as exc:  # noqa: BLE001
-        print(f"[tts] ERROR: {exc}")
-        return f"Audio playback error: {exc}"
-    finally:
-        try:
-            if stream is not None:
-                stream.Close()
-        except Exception:
-            pass
-        try:
-            if speaker is not None:
-                speaker.AudioOutputStream = None
-        except Exception:
-            pass
-
-
-def _play_wav_blocking(wav_path: str) -> None:
-    """Reproduz um WAV via sounddevice, bloqueando ate o fim.
-
-    Substitui os.startfile() que abria o player externo e acumulava instancias.
-    sounddevice gera um buffer em memoria e toca direto no dispositivo de audio
-    padrao, sem spawn de processos.
-
-    Se sounddevice nao estiver disponivel, faz fallback silencioso para
-    winsound (tambem nao spawna processo).
-    """
-    try:
-        # Le o WAV com stdlib
-        import wave
-        with wave.open(wav_path, "rb") as wf:
-            n_channels = wf.getnchannels()
-            sample_width = wf.getsampwidth()
-            framerate = wf.getframerate()
-            n_frames = wf.getnframes()
-            data = wf.readframes(n_frames)
-
-        # Tenta sounddevice primeiro (PCM int16 ou float32)
-        try:
-            import sounddevice as sd
-            import numpy as np  # type: ignore
-            if sample_width == 2:
-                audio = np.frombuffer(data, dtype=np.int16)
-            elif sample_width == 4:
-                audio = np.frombuffer(data, dtype=np.int32)
-            elif sample_width == 1:
-                audio = np.frombuffer(data, dtype=np.uint8).astype(np.int16) * 256
-            else:
-                audio = np.frombuffer(data, dtype=np.int16)
-            sd.play(audio, samplerate=framerate, blocking=True)
-            return
-        except ImportError:
-            pass
-
-        # Fallback: winsound (nao spawna processo, toca direto)
-        import winsound  # type: ignore
-        winsound.PlaySound(wav_path, winsound.SND_FILENAME | winsound.SND_NODEFAULT)
-    except Exception:
-        # Em ultimo caso, log silencioso. NUNCA chamar os.startfile() de novo:
-        # isso era o bug original.
-        pass
+    print(f"[tts] speak_with_audio (legacy): len={len(text or '')}")
+    wav_path = speak_to_file(text)
+    return f"Generated: {wav_path} (playback is browser responsibility)"
 
 
 def wav_duration_seconds(wav_path) -> float:

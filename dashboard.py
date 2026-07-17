@@ -26,7 +26,8 @@ PROJECT_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_DIR))
 
 # ---- Lazy / safe imports for jarvis subsystems ----
-import pyaudio  # resolves to the sounddevice-based shim in this project
+# pyaudio: usado para listar microfones; nao e tocado audio no servidor.
+import pyaudio
 
 # Track when we started, for the "uptime" tile.
 STARTED_AT = time.time()
@@ -608,41 +609,90 @@ def _append_log(line: str) -> None:
 
 @app.post("/api/speak")
 async def api_speak(payload: TextPayload):
-    """Pre-processa o texto para TTS e devolve os meta-dados.
+    """Gera WAV via SAPI5 e devolve os bytes para o navegador.
 
-    O frontend (Chrome/Edge) usa a API nativa `speechSynthesis.speak()`
-    com vozes PT-BR (Microsoft Maria, Google pt-BR) - melhor qualidade
-    que SAPI5 do Windows, sem precisar gerar WAV nem spawnar processo.
+    Contrato:
+      Request: JSON {"text": str}
+      Response: audio/wav (bytes) com headers Cache-Control: no-store e
+                Content-Disposition: inline; filename="jarvis_<ts>.wav"
 
-    SAPI5 fica como fallback (header X-Use-Sapi5: true ou sem vozes no browser).
+    NAO reproduz audio no servidor. Quem toca e o navegador via HTMLAudioElement.
+    O frontend converte o Response em Blob, cria URL.createObjectURL e da play.
 
-    Returns JSON {"text": str, "engine": "browser"|"sapi5", "duration": int}
+    Valido / estados:
+      200 + WAV         — fala gerada
+      400 + JSON        — texto vazio / filtrado
+      503 + JSON        — SAPI5 nao disponivel (som em ambiente sem COM)
     """
-    from TextToSpeech.Fast_DF_TTS import _clean_for_speech, _has_meta_content, _smart_truncate
+    from TextToSpeech.Fast_DF_TTS import (
+        speak_to_file,
+        _clean_for_speech,
+        _has_meta_content,
+        _smart_truncate,
+    )
 
     raw = payload.text or ""
     clean = _clean_for_speech(raw)
     if not clean:
-        return JSONResponse({"status": "empty", "text": ""}, status_code=400)
+        return JSONResponse(
+            {"status": "empty", "reason": "text vazio apos limpeza"},
+            status_code=400,
+        )
 
     # Bloqueia meta-fala do LLM (substituido por mensagem amigavel)
     if _has_meta_content(clean):
         _append_log(f"WARN: meta-fala bloqueada: {clean[:80]!r}")
-        return JSONResponse({
-            "status": "skip_meta",
-            "text": "(mensagem bloqueada pelo filtro anti-meta-fala)",
-            "engine": "browser",
-        })
+        clean = "Mensagem bloqueada pelo filtro de seguranca."
 
-    # Encurta respostas muito longas
+    # Encurta respostas muito longas para nao gerar WAVs gigantes
     text = _smart_truncate(clean, max_chars=600)
-    _append_log(f"OK: speak (browser TTS) -> {len(text)} chars")
-    return JSONResponse({
-        "status": "ok",
-        "text": text,
-        "engine": "browser",
-        "duration_seconds": max(1, len(text.split()) // 2),
-    })
+
+    # Gera o WAV num arquivo temporario em disco (SAPI5 exige Write Stream).
+    try:
+        wav_path = speak_to_file(text)
+    except Exception as exc:  # noqa: BLE001
+        _append_log(f"ERROR: speak_to_file falhou: {exc}")
+        return JSONResponse(
+            {
+                "status": "error",
+                "reason": "sapi5 indisponivel",
+                "detail": str(exc),
+            },
+            status_code=503,
+        )
+
+    # Le o arquivo como bytes
+    try:
+        with open(wav_path, "rb") as fh:
+            wav_bytes = fh.read()
+    except OSError as exc:
+        _append_log(f"ERROR: leitura do WAV falhou: {exc}")
+        return JSONResponse(
+            {"status": "error", "reason": "arquivo nao legivel", "detail": str(exc)},
+            status_code=500,
+        )
+
+    dur = _wav_dur(wav_bytes)
+    _append_log(
+        f"OK: speak wav -> {len(wav_bytes)} bytes, {dur:.2f}s, {len(text)} chars"
+    )
+
+    # Devolve o WAV cru. O navegador instancia Audio(blob) e toca via JS.
+    # Cache-Control: no-store evita que o browser reuse audio antigo.
+    # Content-Disposition: inline permite tocar sem download prompt.
+    fname = os.path.basename(wav_path)
+    return Response(
+        content=wav_bytes,
+        media_type="audio/wav",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Content-Disposition": f'inline; filename="{fname}"',
+            "X-Jarvis-Engine": "sapi5",
+            "X-Jarvis-Duration": f"{dur:.2f}",
+            "X-Jarvis-Chars": str(len(text)),
+            "Content-Length": str(len(wav_bytes)),
+        },
+    )
 
 
 def _wav_dur(wav_bytes: bytes) -> float:
