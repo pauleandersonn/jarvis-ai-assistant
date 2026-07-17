@@ -50,16 +50,67 @@ def _ensure_com() -> None:
 
 
 def _clean_for_speech(text: str) -> str:
-    """Strip sources / markdown that don't sound good when spoken aloud."""
+    """Strip sources / markdown / meta-talk that don't sound good when spoken."""
     if not text:
         return ""
     # Remove "Fontes:\n..." blocks added by the researcher.
     text = text.split("\n\nFontes:\n")[0]
     # Remove citation markers like [1], [2].
     text = re.sub(r"\[\d+\]", "", text)
+    # Strip code fences and inline code (JARVIS shouldn't read raw code aloud).
+    text = re.sub(r"```[\s\S]*?```", " ", text)
+    text = re.sub(r"`[^`]+`", " ", text)
     # Collapse whitespace.
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+# Phrases the LLM sometimes echoes back that we don't want spoken out loud.
+# These are signs the model is talking about itself instead of answering.
+_META_PHRASES = (
+    "como sou um modelo de texto",
+    "como modelo de linguagem",
+    "nao tenho acesso a sua localizacao",
+    "nao tenho acesso a localizacao",
+    "como um modelo de ia",
+    "nao possuo um corpo fisico",
+    "nao tenho um corpo",
+    "use o comando /voice",
+    "use o botao de microfone",
+    "como assistente virtual",
+    "como ia",
+    "como inteligencia artificial",
+    "minha funcao e",
+)
+
+
+def _has_meta_content(text: str) -> bool:
+    """Detecta se a resposta do LLM e meta-fala (fala sobre si mesmo em vez de responder).
+
+    Quando True, o cliente vai mostrar fallback em vez de falar essa bobagem.
+    """
+    if not text:
+        return False
+    lower = text.lower()
+    # Tem 2+ marcadores meta = claramente falando sobre si mesmo
+    hits = sum(1 for p in _META_PHRASES if p in lower)
+    return hits >= 2
+
+
+def _smart_truncate(text: str, max_chars: int = 600) -> str:
+    """Encurta respostas muito longas pra TTS.
+
+    FreeAI as vezes cospe o prompt inteiro do sistema ou respostas de 2000+ chars.
+    Cortamos em max_chars preservando a primeira sentenca completa.
+    """
+    if len(text) <= max_chars:
+        return text
+    # Corta em sentenca mais proxima
+    cut = text[:max_chars]
+    last_dot = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+    if last_dot > max_chars * 0.5:
+        return cut[:last_dot + 1]
+    return cut + "..."
 
 
 def _new_speaker():
@@ -119,6 +170,13 @@ def speak_with_audio(text: str, audio_file: str | None = None) -> str:
     clean = _clean_for_speech(text)
     if not clean:
         return "Nothing to say."
+
+    # Bloqueia meta-fala (LLM falando sobre si mesmo em vez de responder).
+    if _has_meta_content(clean):
+        return f"[skip meta-talk: {clean[:80]}...]"
+
+    # Encurta respostas longas pra nao gerar WAVs gigantes.
+    clean = _smart_truncate(clean, max_chars=600)
 
     speaker = None
     stream = None
