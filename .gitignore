@@ -34,11 +34,16 @@ check-procs.ps1
 restart-clean.ps1
 commit-orb.ps1
 commit-css.ps1
+commit-tts-fix.ps1
+commit-cleanup.ps1
 fix-*.ps1
 fix-*.py
 inspect-*.py
 show-*.ps1
 test-*.ps1
+transcribe-*.py
+inspect-*.py
+kill-dashboard.ps1
 
 # Generated images (TextToImage/Generated/*.jpg são output do Pollinations)
 TextToImage/Generated/
