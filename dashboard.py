@@ -403,6 +403,55 @@ def api_memory_project_update(payload: ProjectUpdatePayload) -> JSONResponse:
         return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
 
 
+# ---------- Reminders (adaptado de Mark-XLIX, CC BY-NC 4.0) ----------
+class ReminderPayload(BaseModel):
+    message: str
+    minutes: int = 5
+
+
+@app.post("/api/reminder/add", include_in_schema=False)
+def api_reminder_add(payload: ReminderPayload) -> JSONResponse:
+    """Agenda um lembrete via Windows Task Scheduler (schtasks)."""
+    from Brain.actions import add_reminder, list_reminders
+    result = add_reminder(payload.message, payload.minutes)
+    status = 200 if result.get("ok") else 500
+    return JSONResponse(result, status_code=status)
+
+
+@app.get("/api/reminder/list", include_in_schema=False)
+def api_reminder_list() -> JSONResponse:
+    """Lista lembretes JARVIS pendentes."""
+    from Brain.actions import list_reminders
+    return JSONResponse({"reminders": list_reminders()})
+
+
+class ReminderDeletePayload(BaseModel):
+    task_name: str
+
+
+@app.post("/api/reminder/delete", include_in_schema=False)
+def api_reminder_delete(payload: ReminderDeletePayload) -> JSONResponse:
+    """Remove um lembrete pelo nome da task (deve comecar com JARVIS)."""
+    from Brain.actions import remove_reminder
+    result = remove_reminder(payload.task_name)
+    status = 200 if result.get("ok") else 400
+    return JSONResponse(result, status_code=status)
+
+
+# ---------- Open apps (adaptado de Mark-XLIX, CC BY-NC 4.0) ----------
+class OpenAppPayload(BaseModel):
+    query: str
+
+
+@app.post("/api/open-app", include_in_schema=False)
+def api_open_app(payload: OpenAppPayload) -> JSONResponse:
+    """Abre um aplicativo por nome (chrome, vscode, spotify, etc.)."""
+    from Brain.actions import open_app
+    result = open_app(payload.query)
+    status = 200 if result.get("ok") else 400
+    return JSONResponse(result, status_code=status)
+
+
 # ---------- Web search ----------
 class TextPayload(BaseModel):
     text: str
