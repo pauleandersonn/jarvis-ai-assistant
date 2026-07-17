@@ -33,6 +33,7 @@ run-dashboard.bat
 check-procs.ps1
 restart-clean.ps1
 commit-orb.ps1
+commit-css.ps1
 
 # Generated images (TextToImage/Generated/*.jpg são output do Pollinations)
 TextToImage/Generated/
