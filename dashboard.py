@@ -221,15 +221,42 @@ def greeting() -> JSONResponse:
         f"{period}. Como posso ajudar nesta {period_en}?",
     ]
     line = random.choice(base_lines)
+    city_note = ""
     if city:
-        line += f" Localizacao detectada: {city}."
+        city_note = f" Localizacao detectada: {city}."
+
+    # Anuncia qual LLM esta' em uso (util quando openai_cloud entra em cena).
+    # Mostra em chat mas NAO fala via TTS (o campo "speak" e' abaixo).
+    try:
+        from Brain.llm_client import (
+            get_llm_provider as _gprov, get_llm_settings as _gset,
+            validate_openai_cloud_key,
+        )
+        provider = _gprov()
+        if provider == "openai_cloud":
+            url, model = _gset()
+            key_ok = validate_openai_cloud_key(timeout=4)
+            status_txt = "online" if key_ok else "offline"
+            lline = f"Cerebro: {model} ({status_txt}, via {url})."
+        elif provider == "ollama":
+            _, model = _gset()
+            lline = f"Cerebro: Ollama local ({model})."
+        elif provider == "openai":
+            _, model = _gset()
+            lline = f"Cerebro: OpenAI-compat local ({model})."
+        else:
+            lline = "Cerebro: FreeAI (sem chave)."
+    except Exception as _e:
+        lline = "Cerebro: modo padrao."
 
     return JSONResponse({
-        "text": line,
-        "hour": hour,
-        "weekday": weekday_pt,
-        "city": city,
-        "period": period_en,
+        "text":  line,                   # o que fala via TTS (sem o "cerebro")
+        "speak": line + city_note,       # idem + cidade
+        "llm":   lline,                  # exibido no chat, NAO falado
+        "hour":  hour,
+        "weekday":  weekday_pt,
+        "city":     city,
+        "period":   period_en,
     })
 
 

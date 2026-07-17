@@ -1022,6 +1022,20 @@ body.state-listening .orb-status { color: var(--accent); }
 body.state-thinking .orb-status { color: var(--secondary); }
 body.state-speaking .orb-status { color: var(--success); }
 
+/* ───────── LLM info chip (exibe qual provider/model esta' rodando) ───────── */
+.llm-info {
+  font-size: 11px;
+  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  color: var(--text-dim, rgba(255,255,255,0.55));
+  margin-top: 4px;
+  min-height: 14px;
+  letter-spacing: 0.02em;
+  transition: color 0.3s ease;
+}
+.llm-info:empty { display: none; }
+.llm-info.online  { color: var(--success, #22c55e); }
+.llm-info.offline { color: #f59e0b; }
+
 /* ───────── Voice bar ───────── */
 .voice-bar {
   display: flex;

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Local LLM client - adaptado de Mark XLIX (FatihMakes, CC BY-NC 4.0).
 Adaptado por @pauleandersonn para JARVIS Premium Edition.
 
@@ -54,28 +54,152 @@ CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 _DEFAULTS = {
     "llm_url":      "http://localhost:11434",
     "llm_model":    "llama3.2",
-    # "freeai" (default) | "ollama" | "openai"
-    # freeai = webscout.FreeAI (sem API key, sem Ollama)
-    # ollama = Ollama local (precisa ollama serve + ollama pull)
-    # openai = OpenAI-compat (LM Studio, Jan, llama.cpp, vLLM)
+    # "freeai" (default) | "ollama" | "openai" | "openai_cloud"
+    # freeai       - webscout.FreeAI (sem chave, sem Ollama)
+    # ollama       - Ollama local (precisa ollama serve + ollama pull)
+    # openai       - OpenAI-compat local sem chave (LM Studio, Jan, llama.cpp)
+    # openai_cloud - OpenAI-compat HTTPS (OpenAI, Groq, OpenRouter, DeepSeek, Together)
+    #                Requer JARVIS_OPENAI_API_KEY (ou openai_api_key no config)
     "llm_provider": "freeai",
+    # openai_cloud defaults (podem ser sobrescritos via env vars)
+    "openai_cloud_base_url": "https://api.openai.com/v1",
+    "openai_cloud_model":    "gpt-4o-mini",
 }
 
 
-def get_llm_provider() -> str:
-    """Returns 'freeai', 'ollama' or 'openai' (covers LM Studio, LocalAI, Jan, etc.).
-    Override via env var JARVIS_LLM_PROVIDER > config file > default.
+def _safe_mask_key(k):
+    """Mascara chave para log seguro: 'sk-abc...xyz'. Vazia se nao setada.
+
+    NUNCA retorna a chave inteira em log / print / repr().
     """
-    # Env var wins so you can switch providers without editing config
+    if not k or not isinstance(k, str):
+        return ""
+    k = k.strip()
+    if len(k) <= 8:
+        return "<short>"
+    return f"{k[:6]}...{k[-4:]}"
+
+
+def _read_env_file(path):
+    """Carrega `.env` (KEY=VALUE) em os.environ SE ainda nao setadas.
+
+    Variaveis ja presentes na sessao NAO sao sobrescritas. Comentarios comecam
+    com `#`, aspas externas (simples/dupla) sao removidas.
+    """
+    p = Path(path)
+    if not p.exists():
+        return
+    try:
+        for raw in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip().strip('"').strip("'")
+            if not k:
+                continue
+            os.environ.setdefault(k, v)
+    except Exception as exc:
+        print(f"[LLM] warn: falha ao ler {path}: {exc}")
+
+
+# Carrega .env antes de qualquer leitura de env var no resto do modulo.
+_read_env_file(get_base_dir() / ".env")
+
+
+def get_openai_api_key():
+    """Devolve a chave OpenAI/cloud. Ordem: env var > config > ''.
+
+    NUNCA imprima / repr() o retorno direto - use `_safe_mask_key()`.
+    """
+    env = (os.environ.get("JARVIS_OPENAI_API_KEY") or "").strip()
+    if env:
+        return env
+
+    cfg = _load_config()
+    k = cfg.get("openai_api_key")
+    if isinstance(k, str) and k.strip():
+        return k.strip()
+
+    # Fallback opcional: OpenRouter costuma usar OPENROUTER_API_KEY
+    env_or = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+    if env_or:
+        return env_or
+    return ""
+
+
+def get_openai_cloud_settings():
+    """(base_url, model) para o provider openai_cloud."""
+    cfg = _load_config()
+    block = cfg.get("openai_cloud") if isinstance(cfg.get("openai_cloud"), dict) else {}
+
+    url = (
+        (os.environ.get("JARVIS_OPENAI_BASE_URL") or "").strip()
+        or (block.get("base_url") or "").strip()
+        or _DEFAULTS["openai_cloud_base_url"]
+    )
+    model = (
+        (os.environ.get("JARVIS_OPENAI_MODEL") or "").strip()
+        or (block.get("model") or "").strip()
+        or _DEFAULTS["openai_cloud_model"]
+    )
+    return url.rstrip("/"), model
+
+
+def validate_openai_cloud_key(timeout=8):
+    """GET /models com a chave para confirmar que ela e' aceita.
+
+    NAO loga a chave - apenas mascara com `_safe_mask_key()`.
+    """
+    key = get_openai_api_key()
+    if not key:
+        return False
+    url, _ = get_openai_cloud_settings()
+    try:
+        r = requests.get(
+            f"{url}/models",
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=timeout,
+        )
+        if r.status_code == 200:
+            print(f"[LLM] openai_cloud key OK ({_safe_mask_key(key)}) -> {url}")
+            return True
+        print(f"[LLM] openai_cloud key rejeitada: HTTP {r.status_code}")
+        return False
+    except Exception as exc:
+        print(f"[LLM] openai_cloud health error: {exc}")
+        return False
+
+
+def get_llm_provider() -> str:
+    """Retorna um de: 'freeai', 'ollama', 'openai' (local) ou 'openai_cloud' (HTTPS).
+
+    Precedencia: env var JARVIS_LLM_PROVIDER > config/api_keys.json > default (freeai).
+
+    Aliases aceitos no env var:
+      - openai, lmstudio, localai, jan, llamacpp -> 'openai'  (local sem chave)
+      - groq, openrouter, deepseek, together, openai_cloud -> 'openai_cloud' (HTTPS com chave)
+    """
     env = (os.environ.get("JARVIS_LLM_PROVIDER") or "").strip().lower()
-    if env in ("freeai", "ollama", "openai", "lmstudio", "localai", "jan", "llamacpp"):
-        return "openai" if env in ("openai", "lmstudio", "localai", "jan", "llamacpp") else env
+    if env in ("freeai", "ollama", "openai_cloud", "openai",
+               "lmstudio", "localai", "jan", "llamacpp",
+               "groq", "openrouter", "deepseek", "together"):
+        if env in ("openai", "lmstudio", "localai", "jan", "llamacpp"):
+            return "openai"
+        if env in ("groq", "openrouter", "deepseek", "together"):
+            return "openai_cloud"
+        return env
 
     raw = _load_config().get("llm_provider", "freeai").strip().lower()
-    if raw in ("ollama", "openai"):
+    if raw in ("ollama", "openai", "openai_cloud"):
         return raw
     if raw in ("openai", "lmstudio", "localai", "jan", "llamacpp"):
         return "openai"
+    if raw in ("groq", "openrouter", "deepseek", "together"):
+        return "openai_cloud"
     return "freeai"
 
 
@@ -173,9 +297,8 @@ def warmup_model(system_prompt: str | None = None) -> bool:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": "hi"})
 
-    if provider == "openai":
+    if provider in ("openai", "openai_cloud"):
         # OpenAI-compatible: just fire a minimal request to ensure the model is loaded.
-        # No keep_alive or KV-cache priming available â€” server manages this internally.
         payload = {
             "model":      model,
             "messages":   messages,
@@ -183,9 +306,14 @@ def warmup_model(system_prompt: str | None = None) -> bool:
             "max_tokens": 1,
         }
         try:
-            resp = requests.post(f"{url}/v1/chat/completions", json=payload, timeout=180)
+            resp = requests.post(
+                f"{url}/v1/chat/completions",
+                json=payload,
+                headers=_llm_headers(provider),
+                timeout=180,
+            )
             resp.raise_for_status()
-            print(f"[LLM] '{model}' ready (OpenAI-compatible server).")
+            print(f"[LLM] '{model}' ready ({provider}).")
             return True
         except Exception as e:
             print(f"[LLM] Warmup failed (non-fatal): {e}")
@@ -246,11 +374,39 @@ def check_model_available(log: Callable | None = None) -> bool:
 
 
 def get_llm_settings() -> tuple[str, str]:
-    """Returns (base_url, model_name)."""
-    cfg   = _load_config()
+    """Returns (base_url, model_name) para o provider ativo.
+
+    Para 'ollama' / 'openai' local -> usa llm_url/llm_model do config (legado).
+    Para 'openai_cloud' -> usa get_openai_cloud_settings() (env var ou bloco
+    openai_cloud do config), sempre HTTPS.
+    """
+    cfg = _load_config()
+    provider = get_llm_provider()
+
+    if provider == "openai_cloud":
+        url, model = get_openai_cloud_settings()
+        return url, model
+
     url   = cfg.get("llm_url",   _DEFAULTS["llm_url"]).rstrip("/")
     model = cfg.get("llm_model", _DEFAULTS["llm_model"])
     return url, model
+
+
+def _llm_headers(provider: str) -> dict:
+    """Headers para o provider dado. Sempre inclui 'Content-Type'.
+
+    Para 'openai_cloud' adiciona 'Authorization: Bearer <key>' (a chave e'
+    lida mas NUNCA impressa em log).
+    """
+    h = {"Content-Type": "application/json"}
+    if provider == "openai_cloud":
+        key = get_openai_api_key()
+        if key:
+            h["Authorization"] = f"Bearer {key}"
+        else:
+            print("[LLM] WARN: openai_cloud selecionado sem "
+                  "JARVIS_OPENAI_API_KEY - chamada provavelmente falhara.")
+    return h
 
 
 def call_llm(
@@ -267,7 +423,7 @@ def call_llm(
     url, model = get_llm_settings()
     provider   = get_llm_provider()
 
-    if provider == "openai":
+    if provider in ("openai", "openai_cloud"):
         endpoint = f"{url}/v1/chat/completions"
         payload: dict = {
             "model":      model,
@@ -279,11 +435,16 @@ def call_llm(
             payload["tools"]       = tools
             payload["tool_choice"] = "auto"
         try:
-            resp = requests.post(endpoint, json=payload, timeout=timeout)
+            resp = requests.post(
+                endpoint,
+                json=payload,
+                headers=_llm_headers(provider),
+                timeout=timeout,
+            )
             resp.raise_for_status()
             choice = resp.json().get("choices", [{}])[0]
             msg    = choice.get("message", {})
-            # OpenAI tool_calls format â†’ normalise to Ollama-style
+            # OpenAI tool_calls format -> normalise to Ollama-style
             raw_tc  = msg.get("tool_calls") or []
             tc_list = [
                 {
@@ -303,6 +464,16 @@ def call_llm(
                 "content":    (msg.get("content") or "").strip(),
                 "tool_calls": tc_list,
             }
+        except requests.exceptions.HTTPError as e:
+            code = e.response.status_code if e.response is not None else "?"
+            body = (e.response.text or "")[:200] if e.response is not None else ""
+            print(f"[LLM] HTTPError ({provider}): {code} - {body}")
+            if provider == "openai_cloud" and code in (401, 403):
+                raise RuntimeError(
+                    "openai_cloud rejeitou a chave (HTTP "
+                    f"{code}). Verifique JARVIS_OPENAI_API_KEY."
+                )
+            raise RuntimeError(f"OpenAI-compatible LLM call failed: {code} - {body}")
         except Exception as e:
             raise RuntimeError(f"OpenAI-compatible LLM call failed: {e}")
 
@@ -375,7 +546,7 @@ def call_llm_text(
             return f"[freeai offline] {_e}"
 
     url, default_model = get_llm_settings()
-    endpoint = f"{url}/api/chat"
+    provider = get_llm_provider()
     m        = model or default_model
 
     messages: list[dict] = []
@@ -383,7 +554,40 @@ def call_llm_text(
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    payload = {"model": m, "messages": messages, "stream": False, "keep_alive": -1, "options": {"num_predict": 600}}
+    # openai_cloud usa o mesmo formato OpenAI-compat de '/v1/chat/completions'.
+    if provider == "openai_cloud":
+        endpoint = f"{url}/v1/chat/completions"
+        payload  = {
+            "model":      m,
+            "messages":   messages,
+            "stream":     False,
+            "max_tokens": 600,
+        }
+        try:
+            resp = requests.post(
+                endpoint,
+                json=payload,
+                headers=_llm_headers(provider),
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            choice = resp.json().get("choices", [{}])[0]
+            return (choice.get("message", {}).get("content") or "").strip()
+        except requests.exceptions.HTTPError as e:
+            code = e.response.status_code if e.response is not None else "?"
+            body = (e.response.text or "")[:200] if e.response is not None else ""
+            if code in (401, 403):
+                raise RuntimeError(
+                    f"openai_cloud rejeitou a chave (HTTP {code}). "
+                    "Verifique JARVIS_OPENAI_API_KEY."
+                )
+            raise RuntimeError(f"openai_cloud HTTP {code} - {body}")
+        except Exception as e:
+            raise RuntimeError(f"openai_cloud call failed: {e}")
+
+    # Ollama (legado)
+    endpoint = f"{url}/api/chat"
+    payload  = {"model": m, "messages": messages, "stream": False, "keep_alive": -1, "options": {"num_predict": 600}}
 
     try:
         resp = requests.post(endpoint, json=payload, timeout=timeout)
@@ -411,11 +615,14 @@ def _stream_openai(
     timeout:  int,
 ) -> Generator[dict, None, None]:
     """
-    Streaming backend for OpenAI-compatible servers (LM Studio, LocalAI, Janâ€¦).
+    Streaming backend for OpenAI-compatible servers (LM Studio, LocalAI, Jan,
+    e tambem o provider 'openai_cloud' - OpenAI/Groq/OpenRouter/DeepSeek/Together).
 
-    Parses Server-Sent Events (SSE) and accumulates streaming tool-call fragments
-    so the output format is identical to the Ollama backend.
+    Parses Server-Sent Events (SSE) e acumula fragmentos de tool-call para que o
+    formato de saida seja identico ao backend Ollama. Adiciona o header
+    `Authorization: Bearer <key>` automaticamente quando provider='openai_cloud'.
     """
+    provider = get_llm_provider()
     url, model = get_llm_settings()
     endpoint   = f"{url}/v1/chat/completions"
 
@@ -430,7 +637,13 @@ def _stream_openai(
         payload["tool_choice"] = "auto"
 
     try:
-        with requests.post(endpoint, json=payload, timeout=timeout, stream=True) as resp:
+        with requests.post(
+            endpoint,
+            json=payload,
+            headers=_llm_headers(provider),
+            timeout=timeout,
+            stream=True,
+        ) as resp:
             resp.raise_for_status()
             full_content = ""
             buf          = ""
@@ -537,7 +750,7 @@ def call_llm_stream(
     Tool calls always appear in the final "done" event.
     """
     provider = get_llm_provider()
-    if provider == "openai":
+    if provider in ("openai", "openai_cloud"):
         yield from _stream_openai(messages, tools, timeout)
         return
 

@@ -70,10 +70,14 @@ $RECYCLE.BIN/
 # Secrets / local config — never commit
 .env
 .env.local
+.env.*.local
 *.pem
 *.key
 config.local.py
 secrets.yaml
+config/secrets.json
+# Allow the template (no real keys) to be committed
+!config/api_keys.json
 
 # TTS / speech artifacts (rendered WAVs)
 tts_output/

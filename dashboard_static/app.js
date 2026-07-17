@@ -1190,11 +1190,24 @@ async function bootGreeting() {
       setTimeout(() => { status.textContent = original; }, 8000);
     }
 
+    // 2.5 exibe o status do LLM no chip central (visivel, NAO falado)
+    if (g.llm) {
+      const llmEl = document.getElementById("llm-info");
+      if (llmEl) {
+        llmEl.textContent = g.llm;
+        llmEl.classList.remove("online", "offline");
+        if (/online/i.test(g.llm))      llmEl.classList.add("online");
+        else if (/offline/i.test(g.llm)) llmEl.classList.add("offline");
+      } else if (status) {
+        status.textContent = g.text + " | " + g.llm;
+      }
+    }
+
     // 3. fala via TTS no boot SOMENTE se o usuario ja desbloqueou audio.
     //    Sem gesture previo, Chrome bloqueia audio.play() e a gente
     //    fica mudo. O usuario clica "Ativar audio" primeiro.
     if (!window.JARVIS_MUTED && audioUnlocked) {
-      speakArbitrary(g.text).catch(e => {
+      speakArbitrary(g.speak || g.text).catch(e => {
         if (window.JARVIS_DEBUG) console.warn("[greeting] speak falhou:", e);
       });
     }
