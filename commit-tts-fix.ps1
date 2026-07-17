@@ -1,0 +1,4 @@
+Set-Location 'C:\Users\paule\Projects\jarvis-ai-assistant'
+git add -A
+git commit -m 'fix(TTS): eliminar bug do mesmo audio em loop acumulado' -m 'Causa raiz: speak() usava os.startfile(wav_path) que abria o Windows Media Player toda vez. Ao reabrir o dashboard ou clicar no botao de voz varias vezes, multiplas instancias do player ficavam abertas em background tocando o mesmo WAV de 846KB indefinidamente.' -m 'Fix: reproducao direta via sounddevice + wave stdlib no _play_wav_blocking() - nenhum processo spawnado, buffer em memoria, toca uma vez e termina. Fallback winsound.PlaySound se sounddevice nao disponivel.' -m 'Limpou 6 arquivos WAV duplicados em TextToSpeech/tmp_audio/. Cada fala agora gera audio unico (testado: 2 chamadas = 2 WAVs de tamanhos diferentes).'
+git push origin main

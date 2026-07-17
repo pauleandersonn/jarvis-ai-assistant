@@ -68,6 +68,11 @@ _NO_CACHE = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
     "Expires": "0",
+    # Bloqueia pedido de geolocalizacao e outros recursos sensiveis
+    # por outros scripts (extensoes, etc) carregados na pagina.
+    "Permissions-Policy": "geolocation=(), microphone=(self), camera=()",
+    # Politica de permissao padrao: o navegador exige acao do usuario pra TTS.
+    "Referrer-Policy": "no-referrer",
 }
 
 

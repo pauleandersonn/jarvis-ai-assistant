@@ -1,9 +1,11 @@
 """Text-to-speech + playback using Windows native SAPI5 + os.startfile.
 
 We replaced the original `playsound==1.2.2` (which deadlocks on
-Python 3.13+) with `os.startfile`, which asks the OS to open the WAV
-in the default player. We keep using Windows' built-in SAPI5 voice
-through `win32com.client` so no extra dependency is needed.
+Python 3.13+) and `os.startfile` (which spawned Windows Media Player
+and accumulated instances in background, causing the "same audio
+loop" bug) with `sounddevice` + `wave` stdlib: the WAV is played in a
+Python thread directly through the default audio device, no external
+player, no instance leak.
 
 We create a fresh `SAPI.SpVoice` instance on every call instead of
 caching one. Caching leads to COM error 0x80010008 ("Exception") when
@@ -141,7 +143,10 @@ def speak_with_audio(text: str, audio_file: str | None = None) -> str:
         stream = None
         speaker.AudioOutputStream = None
 
-        os.startfile(str(wav_path))  # noqa: S606
+        # Reproduz o WAV DIRETAMENTE via sounddevice (sem abrir player externo).
+        # Antes usavamos os.startfile(), que abria o Windows Media Player toda vez
+        # e acumulava instancias em background tocando o mesmo audio em loop.
+        _play_wav_blocking(str(wav_path))
         return f"Played: {wav_path}"
     except Exception as exc:  # noqa: BLE001
         return f"Audio playback error: {exc}"
@@ -156,6 +161,52 @@ def speak_with_audio(text: str, audio_file: str | None = None) -> str:
                 speaker.AudioOutputStream = None
         except Exception:
             pass
+
+
+def _play_wav_blocking(wav_path: str) -> None:
+    """Reproduz um WAV via sounddevice, bloqueando ate o fim.
+
+    Substitui os.startfile() que abria o player externo e acumulava instancias.
+    sounddevice gera um buffer em memoria e toca direto no dispositivo de audio
+    padrao, sem spawn de processos.
+
+    Se sounddevice nao estiver disponivel, faz fallback silencioso para
+    winsound (tambem nao spawna processo).
+    """
+    try:
+        # Le o WAV com stdlib
+        import wave
+        with wave.open(wav_path, "rb") as wf:
+            n_channels = wf.getnchannels()
+            sample_width = wf.getsampwidth()
+            framerate = wf.getframerate()
+            n_frames = wf.getnframes()
+            data = wf.readframes(n_frames)
+
+        # Tenta sounddevice primeiro (PCM int16 ou float32)
+        try:
+            import sounddevice as sd
+            import numpy as np  # type: ignore
+            if sample_width == 2:
+                audio = np.frombuffer(data, dtype=np.int16)
+            elif sample_width == 4:
+                audio = np.frombuffer(data, dtype=np.int32)
+            elif sample_width == 1:
+                audio = np.frombuffer(data, dtype=np.uint8).astype(np.int16) * 256
+            else:
+                audio = np.frombuffer(data, dtype=np.int16)
+            sd.play(audio, samplerate=framerate, blocking=True)
+            return
+        except ImportError:
+            pass
+
+        # Fallback: winsound (nao spawna processo, toca direto)
+        import winsound  # type: ignore
+        winsound.PlaySound(wav_path, winsound.SND_FILENAME | winsound.SND_NODEFAULT)
+    except Exception:
+        # Em ultimo caso, log silencioso. NUNCA chamar os.startfile() de novo:
+        # isso era o bug original.
+        pass
 
 
 def wav_duration_seconds(wav_path) -> float:
