@@ -34,18 +34,11 @@ check-procs.ps1
 restart-clean.ps1
 commit-orb.ps1
 commit-css.ps1
-fix-header.ps1
-fix-provider.ps1
-fix-provider.py
-fix-os-import.py
-fix-freeai-delegate.py
-fix-dashboard-endpoints.py
-inspect-bytes.py
-show-head.ps1
-test-reminder.ps1
-test-actions.ps1
-test-openapp.ps1
-test-delete.ps1
+fix-*.ps1
+fix-*.py
+inspect-*.py
+show-*.ps1
+test-*.ps1
 
 # Generated images (TextToImage/Generated/*.jpg são output do Pollinations)
 TextToImage/Generated/
