@@ -327,6 +327,70 @@ ul, ol {
   font-weight: 500;
 }
 
+/* ───────── Mute toggle ───────── */
+.mute-toggle {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(0, 212, 255, 0.10), rgba(168, 85, 247, 0.10));
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.mute-toggle:hover {
+  border-color: var(--primary);
+  transform: translateY(-1px);
+  box-shadow: 0 0 12px var(--primary-dim);
+}
+
+.mute-toggle:active {
+  transform: translateY(0);
+}
+
+.mute-toggle .material-icons {
+  font-size: 20px;
+  line-height: 1;
+  position: absolute;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* default: voz ligada → mostra volume_up, esconde volume_off */
+.mute-toggle .mute-off {
+  opacity: 0;
+  transform: scale(0.6) rotate(-90deg);
+  pointer-events: none;
+}
+
+.mute-toggle .mute-on {
+  opacity: 1;
+  transform: scale(1) rotate(0deg);
+}
+
+/* quando o body está mudo: oculta volume_up, mostra volume_off */
+body.jarvis-muted .mute-toggle .mute-on {
+  opacity: 0;
+  transform: scale(0.6) rotate(90deg);
+  pointer-events: none;
+}
+
+body.jarvis-muted .mute-toggle .mute-off {
+  opacity: 1;
+  transform: scale(1) rotate(0deg);
+  color: var(--text-dim);
+}
+
+body.jarvis-muted .mute-toggle {
+  background: rgba(255, 255, 255, 0.04);
+  border-style: dashed;
+}
+
 /* ───────── Layout grid ───────── */
 .layout {
   display: grid;

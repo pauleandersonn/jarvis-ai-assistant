@@ -4,6 +4,65 @@
 // para ver logs de mic/reconhecimento durante desenvolvimento.
 window.JARVIS_DEBUG = window.JARVIS_DEBUG || false;
 
+// ───────── Mute / voz toggle ─────────
+// Permite ao usuário ligar/desligar a voz do JARVIS sem interromper
+// o atendimento por texto. Padrão: voz LIGADA (false = mudo desligado).
+// Persistência em localStorage para sobreviver a recarregamentos.
+const MUTE_STORAGE_KEY = "jarvis.muted";
+function muteGet() {
+  try {
+    const v = localStorage.getItem(MUTE_STORAGE_KEY);
+    // Default = false (voz ligada). Só fica mudo se o usuário tiver setado "1" alguma vez.
+    return v === "1";
+  } catch (e) {
+    return false;
+  }
+}
+function muteSet(v) {
+  try { localStorage.setItem(MUTE_STORAGE_KEY, v ? "1" : "0"); } catch (e) {}
+}
+function muteApplyClass() {
+  const muted = muteGet();
+  document.body.classList.toggle("jarvis-muted", muted);
+  // Compat com código legado que checa window.JARVIS_MUTED
+  window.JARVIS_MUTED = muted;
+  return muted;
+}
+function muteToggle() {
+  const nowMuted = !muteGet();
+  muteSet(nowMuted);
+  muteApplyClass();
+  // Se o usuário acabou de LIGAR a voz (nowMuted=false) e o boot
+  // greeting ainda não falou, deixa quieto. Se DESLIGOU, para fala em curso.
+  if (nowMuted) ttsStop();
+  if (window.JARVIS_DEBUG) console.log("[mute] agora mudo?", nowMuted);
+  return nowMuted;
+}
+// Aplica estado salvo o quanto antes (antes de qualquer fala)
+muteApplyClass();
+
+// Bind do clique no botão da topbar
+document.addEventListener("DOMContentLoaded", () => {
+  const btn = document.getElementById("mute-toggle");
+  if (btn) {
+    btn.addEventListener("click", () => {
+      muteToggle();
+    });
+    btn.setAttribute("aria-pressed", muteGet() ? "true" : "false");
+  }
+});
+// Se o DOM já estiver pronto (carregamento async), bind direto também
+(function bindMuteNow() {
+  const btn = document.getElementById("mute-toggle");
+  if (btn && !btn.dataset.bound) {
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => {
+      const m = muteToggle();
+      btn.setAttribute("aria-pressed", m ? "true" : "false");
+    });
+  }
+})();
+
 // ───────── Geração das 24 curvas orgânicas (Layer 2 do orb) ─────────
 // Padrão: linhas bezier tangenciais que se cruzam formando "fibras entrelaçadas",
 // evocando meridianos de uma esfera 3D. Rotação contínua -15deg → 60s clockwise.
@@ -441,6 +500,10 @@ function ttsIsAvailable() {
 
 async function ttsSpeak(text) {
   if (!text) return { ok: false, reason: "empty" };
+  if (muteGet()) {
+    if (window.JARVIS_DEBUG) console.log("[tts] suprimido (mudo):", text.slice(0, 80));
+    return { ok: false, reason: "muted" };
+  }
 
   // Fallback pra SAPI5 do Windows se o browser nao tiver TTS nativo
   if (!ttsIsAvailable()) {
@@ -480,6 +543,10 @@ async function ttsSpeak(text) {
 
 // Fallback: SAPI5 do Windows via /api/speak (WAV binario)
 async function ttsSpeakViaBackend(text) {
+  if (muteGet()) {
+    if (window.JARVIS_DEBUG) console.log("[tts-backend] suprimido (mudo)");
+    return { ok: false, reason: "muted" };
+  }
   try {
     const r = await fetch("/api/speak", {
       method: "POST",
@@ -519,7 +586,24 @@ function interruptSpeech() {
     state.currentAudio = null;
   }
   clearTimeout(state.speechTimer);
+  ttsStop();
   setState("idle");
+}
+
+// Para QUALQUER fala em curso (browser + utterance pendente).
+// Não bloqueia falas futuras — só interrompe a atual.
+function ttsStop() {
+  try {
+    if (TTS && TTS.currentUtterance) {
+      try { TTS.currentUtterance.onend = null; TTS.currentUtterance.onerror = null; } catch (e) {}
+      TTS.currentUtterance = null;
+    }
+    if (window.speechSynthesis && window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+    }
+  } catch (e) {
+    // speechSynthesis pode não existir em alguns browsers; ignora
+  }
 }
 
 // ───────── Brain ─────────
