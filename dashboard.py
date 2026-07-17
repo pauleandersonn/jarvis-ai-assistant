@@ -47,7 +47,9 @@ app = FastAPI(title="Jarvis Dashboard", version="1.0.0")
 # Serve the static frontend from ./dashboard_static
 STATIC_DIR = PROJECT_DIR / "dashboard_static"
 STATIC_DIR.mkdir(exist_ok=True)
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+# Servido via rota customizada /static/{file_path:path} abaixo (com no-cache).
+# (Mantido comentado caso queira voltar ao StaticFiles padrão.)
+# app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -57,6 +59,51 @@ def index() -> str:
     if not html_path.exists():
         return "<h1>dashboard_static/index.html missing</h1>"
     return html_path.read_text(encoding="utf-8")
+
+
+# ---------- Static files com no-cache (evita JS/CSS velho em cache) ----------
+# Em produção você trocaria por StaticFiles mountado com hash nos nomes
+# dos arquivos. Em dev, no-cache garante que cada reload pega a versão nova.
+_NO_CACHE = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
+@app.get("/static/{file_path:path}", include_in_schema=False)
+def static_files(file_path: str) -> Response:
+    """Serve arquivos de dashboard_static/ sem cache.
+
+    Bloqueia path traversal (não permite .. ou caminhos absolutos).
+    """
+    safe = (file_path or "").lstrip("/")
+    if ".." in safe or safe.startswith("/"):
+        return Response(content="forbidden", status_code=403)
+    full = (STATIC_DIR / safe).resolve()
+    if not str(full).startswith(str(STATIC_DIR.resolve())):
+        return Response(content="forbidden", status_code=403)
+    if not full.exists() or not full.is_file():
+        return Response(content="not found", status_code=404)
+    # MIME simples
+    suffix = full.suffix.lower()
+    mime = {
+        ".html": "text/html; charset=utf-8",
+        ".css": "text/css; charset=utf-8",
+        ".js": "application/javascript; charset=utf-8",
+        ".svg": "image/svg+xml",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".ico": "image/x-icon",
+        ".json": "application/json",
+        ".woff2": "font/woff2",
+    }.get(suffix, "application/octet-stream")
+    return Response(
+        content=full.read_bytes(),
+        media_type=mime,
+        headers=_NO_CACHE,
+    )
 
 
 # ---------- Favicon (corta 404 do /favicon.ico automático do navegador) ----------

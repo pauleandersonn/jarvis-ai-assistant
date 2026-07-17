@@ -30,6 +30,11 @@ nohup.out
 dashboard.log
 dashboard.err.log
 run-dashboard.bat
+check-procs.ps1
+restart-clean.ps1
+
+# Generated images (TextToImage/Generated/*.jpg são output do Pollinations)
+TextToImage/Generated/
 
 # OS
 .DS_Store
