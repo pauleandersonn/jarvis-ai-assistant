@@ -40,6 +40,13 @@ show-*.ps1
 test-*.ps1
 transcribe-*.py
 kill-dashboard.ps1
+start-jarvis.ps1
+start-jarvis.bat
+stop-jarvis.ps1
+stop-jarvis.bat
+where-is-jarvis.ps1
+create-shortcut.ps1
+create-stop-shortcut.ps1
 
 # Generated images (TextToImage/Generated/*.jpg são output do Pollinations)
 TextToImage/Generated/
