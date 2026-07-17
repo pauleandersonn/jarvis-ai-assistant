@@ -1,48 +1,209 @@
-import requests # pip install requests
-from playsound import playsound # pip install playsound==1.2.2
+"""Text-to-speech + playback using Windows native SAPI5 + os.startfile.
+
+We replaced the original `playsound==1.2.2` (which deadlocks on
+Python 3.13+) with `os.startfile`, which asks the OS to open the WAV
+in the default player. We keep using Windows' built-in SAPI5 voice
+through `win32com.client` so no extra dependency is needed.
+
+We create a fresh `SAPI.SpVoice` instance on every call instead of
+caching one. Caching leads to COM error 0x80010008 ("Exception") when
+another module on the same process also uses SAPI5.
+
+Threads spawned by FastAPI / uvicorn need `CoInitialize` before they
+can touch COM objects; we wrap SAPI calls in a helper that does this.
+
+We explicitly set Volume=100 and Rate=0 on every fresh instance to
+defeat any leftover state from the SAPI5 defaults.
+"""
+
 import os
-from typing import Union # pip install typing
-import sys
-import time
+import pathlib
+import re
 import threading
+import time
 
-def generate_audio(message: str,voice : str = "Matthew"):
-    url: str = f"https://api.streamelements.com/kappa/v2/speech?voice={voice}&text={{{message}}}"
+import win32com.client  # type: ignore[import-not-found]
 
-    headers = {'User-Agent':'Mozilla/5.0(Maciontosh;intel Mac OS X 10_15_7)AppleWebKit/537.36(KHTML,like Gecoko)Chrome/119.0.0.0 Safari/537.36'}
-    
+# Directory the project will use for generated WAV files.
+TMP_DIR = pathlib.Path(__file__).resolve().parent / "tmp_audio"
+TMP_DIR.mkdir(exist_ok=True)
+
+# Per-thread COM apartment tracking.
+_init_lock = threading.Lock()
+_initialized_threads: set[int] = set()
+
+
+def _ensure_com() -> None:
+    """Initialize COM in the current thread (STA mode) if needed."""
+    tid = threading.get_ident()
+    with _init_lock:
+        if tid in _initialized_threads:
+            return
+        try:
+            import pythoncom  # type: ignore[import-not-found]
+            pythoncom.CoInitialize()
+            _initialized_threads.add(tid)
+        except Exception:
+            _initialized_threads.add(tid)
+
+
+def _clean_for_speech(text: str) -> str:
+    """Strip sources / markdown that don't sound good when spoken aloud."""
+    if not text:
+        return ""
+    # Remove "Fontes:\n..." blocks added by the researcher.
+    text = text.split("\n\nFontes:\n")[0]
+    # Remove citation markers like [1], [2].
+    text = re.sub(r"\[\d+\]", "", text)
+    # Collapse whitespace.
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _new_speaker():
+    """Create a fresh SAPI5 SpVoice instance with sane defaults.
+
+    A fresh instance is safer than a cached one: COM apartments and the
+    SAPI engine don't always play nicely across concurrent threads.
+    """
+    _ensure_com()
+    speaker = win32com.client.Dispatch("SAPI.SpVoice")
+
+    # Pin volume at 100% so the user always hears output, regardless of
+    # whatever the OS-level SAPI default might be in the current session.
     try:
-        result = requests.get(url=url, headers=headers)
-        return result.content
-    except:
-        return None
-    
-def print_animated_message(message):
-    for char in message:
-        sys.stdout.write(char)
-        sys.stdout.flush()
-        time.sleep(0.050)  # Adjust the sleep duration for the animation speed
-    print()
+        speaker.Volume = 100
+    except Exception:
+        pass
 
-def Co_speak(message: str, voice: str = "Matthew", folder: str = "", extension: str = ".mp3") -> Union[None,str]:
+    # Pick the best Portuguese voice available, fallback to default.
     try:
-        result_content = generate_audio(message,voice)
-        file_path = os.path.join(folder,f"{voice}{extension}")
-        with open(file_path,"wb") as file:
-            file.write(result_content)
-        playsound(file_path)
-        os.remove(file_path)
-        return None
-    except Exception as e:
-        print(e)
+        voices = speaker.GetVoices()
+        chosen = None
+        for i in range(voices.Count):
+            v = voices.Item(i)
+            desc = v.GetDescription() or ""
+            if "Portuguese" in desc or "Brasil" in desc:
+                chosen = v
+                break
+        if chosen is not None:
+            speaker.Voice = chosen
+    except Exception:
+        pass
 
-def speak(text):
-    t1 = threading.Thread(target=Co_speak,args=(text,))
-    t2 = threading.Thread(target=print_animated_message,args=(text,))
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
+    return speaker
 
 
-#c
+def speak(text: str) -> str:
+    """Speak `text` out loud and return a status message.
+
+    Strategy: render the audio to a WAV file using SAPI5, then open the
+    file with the OS default player (os.startfile on Windows). Calling
+    SAPI5's `Speak()` directly worked in isolation but failed silently
+    when called from inside a FastAPI / uvicorn worker, so we go through
+    the file path which is reliable.
+    """
+    result = speak_with_audio(text)
+    return result
+
+
+def speak_with_audio(text: str, audio_file: str | None = None) -> str:
+    """Render `text` to a WAV file, then play it via os.startfile.
+
+    This is the proven reliable path: SAPI5 writes a WAV, Windows
+    opens it with the default player, audio comes out. Direct SAPI5
+    playback silently fails inside the uvicorn worker process.
+    """
+    clean = _clean_for_speech(text)
+    if not clean:
+        return "Nothing to say."
+
+    speaker = None
+    stream = None
+    try:
+        wav_path = (
+            pathlib.Path(audio_file) if audio_file
+            else TMP_DIR / f"jarvis_{int(time.time()*1000)}.wav"
+        )
+        wav_path.parent.mkdir(parents=True, exist_ok=True)
+
+        speaker = _new_speaker()
+        stream = win32com.client.Dispatch("SAPI.SpFileStream")
+        # 22 = 16-bit 16 kHz mono (good balance of size and clarity).
+        stream.Format.Type = 22
+        # 3 = SSFMCreateForWrite
+        stream.Open(str(wav_path), 3, False)
+        speaker.AudioOutputStream = stream
+        # SVSFlagsAsync would let us return early; we use sync (0) so we
+        # know the WAV is fully written before we hand it to the player.
+        speaker.Speak(clean, 0)
+        stream.Close()
+        stream = None
+        speaker.AudioOutputStream = None
+
+        os.startfile(str(wav_path))  # noqa: S606
+        return f"Played: {wav_path}"
+    except Exception as exc:  # noqa: BLE001
+        return f"Audio playback error: {exc}"
+    finally:
+        try:
+            if stream is not None:
+                stream.Close()
+        except Exception:
+            pass
+        try:
+            if speaker is not None:
+                speaker.AudioOutputStream = None
+        except Exception:
+            pass
+
+
+def wav_duration_seconds(wav_path) -> float:
+    """Return the duration of a WAV file in seconds by reading its header.
+
+    Standard PCM WAV header layout:
+      bytes 0-3   : "RIFF"
+      bytes 4-7   : file size - 8
+      bytes 8-11  : "WAVE"
+      bytes 12-15 : "fmt "
+      bytes 16-19 : subchunk size (usually 16 for PCM)
+      bytes 20-21 : audio format (1 = PCM)
+      bytes 22-23 : num channels
+      bytes 24-27 : sample rate
+      bytes 28-31 : byte rate = sample_rate * channels * bits_per_sample / 8
+      bytes 32-33 : block align
+      bytes 34-35 : bits per sample
+      then a "data" subchunk with size + audio bytes
+    """
+    try:
+        with open(wav_path, "rb") as fh:
+            riff = fh.read(12)
+            if not riff.startswith(b"RIFF") or not riff[8:12] == b"WAVE":
+                return 0.0
+            # Walk subchunks until we find "fmt " and "data".
+            sample_rate = 0
+            num_channels = 0
+            bits_per_sample = 0
+            data_size = 0
+            while True:
+                chunk_header = fh.read(8)
+                if len(chunk_header) < 8:
+                    break
+                chunk_id = chunk_header[0:4]
+                chunk_size = int.from_bytes(chunk_header[4:8], "little")
+                if chunk_id == b"fmt ":
+                    fmt = fh.read(chunk_size)
+                    num_channels = int.from_bytes(fmt[2:4], "little")
+                    sample_rate = int.from_bytes(fmt[4:8], "little")
+                    bits_per_sample = int.from_bytes(fmt[14:16], "little")
+                elif chunk_id == b"data":
+                    data_size = chunk_size
+                    break
+                else:
+                    fh.seek(chunk_size, 1)  # skip past this chunk
+            if sample_rate <= 0 or num_channels <= 0 or bits_per_sample <= 0:
+                return 0.0
+            bytes_per_second = sample_rate * num_channels * bits_per_sample // 8
+            return data_size / bytes_per_second if bytes_per_second else 0.0
+    except Exception:
+        return 0.0

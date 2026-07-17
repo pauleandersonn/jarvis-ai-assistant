@@ -1,0 +1,85 @@
+# ──────────────────────────────────────────────────────────────────
+#  JARVIS AI Assistant — .gitignore
+#  Built by pauleandersonn · https://github.com/pauleandersonn
+# ──────────────────────────────────────────────────────────────────
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+ENV/
+
+# Logs / runtime
+*.log
+*.err.log
+log.txt
+chat_hystory.txt
+nohup.out
+*.pid
+
+# Dashboard local artifacts
+dashboard.log
+dashboard.err.log
+run-dashboard.bat
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# Secrets / local config — never commit
+.env
+.env.local
+*.pem
+*.key
+config.local.py
+secrets.yaml
+
+# TTS / speech artifacts (rendered WAVs)
+tts_output/
+*.wav
+!samples/*.wav
+
+# Generated images
+generated_images/
+output_images/
+
+# Memory / runtime state (keep schema, ignore state)
+Memory/.state/
+*.bak
+*.tmp
+
+# Node (if any frontend tooling gets added later)
+node_modules/
+dist/
+build/
+.next/
+
+# Coverage / reports
+htmlcov/
+.coverage
+coverage.xml
+.tox/
+
+# Misc
+*.bak
+*.orig
+*.rej

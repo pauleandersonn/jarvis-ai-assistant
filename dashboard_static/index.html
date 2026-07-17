@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>JARVIS v2.6 — Sistema de Assistência Pessoal</title>
+<link rel="stylesheet" href="/static/style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+</head>
+<body class="state-idle">
+
+<!-- ───────── Top bar ───────── -->
+<header class="topbar">
+  <div class="topbar-left">
+    <div class="brand">
+      <span class="brand-mark">◈</span>
+      <span class="brand-name">JARVIS</span>
+    </div>
+    <div class="status-pill online" id="sys-pill">
+      <span class="status-dot"></span>
+      <span class="status-label">Online</span>
+    </div>
+  </div>
+  <div class="topbar-center">
+    <div class="orb-mini" id="orb-mini"></div>
+    <span class="state-label" id="state-label">Pronto para ouvir</span>
+  </div>
+  <div class="topbar-right">
+    <span class="topbar-time" id="topbar-time">--:--</span>
+    <div class="user-chip">
+      <span class="user-avatar">P</span>
+      <span class="user-name">Pauleanderson</span>
+    </div>
+  </div>
+</header>
+
+<!-- ───────── Main layout ───────── -->
+<main class="layout">
+
+  <!-- Left sidebar: assistants -->
+  <aside class="sidebar sidebar-left">
+    <div class="sidebar-section">
+      <div class="sidebar-title">Assistentes</div>
+      <nav class="assistant-list" id="assistant-list">
+        <button class="assistant active" data-assistant="general">
+          <span class="assistant-icon">⬡</span>
+          <span class="assistant-label">Geral</span>
+        </button>
+        <button class="assistant assistant-item" data-assistant="finance" data-cat="financas">
+          <span class="assistant-icon material-icons">attach_money</span>
+          <span class="assistant-label">Finanças</span>
+        </button>
+        <button class="assistant assistant-item" data-assistant="automation" data-cat="automacao">
+          <span class="assistant-icon material-icons">bolt</span>
+          <span class="assistant-label">Automação</span>
+        </button>
+        <button class="assistant assistant-item" data-assistant="search" data-cat="pesquisa">
+          <span class="assistant-icon material-icons">search</span>
+          <span class="assistant-label">Pesquisa</span>
+        </button>
+        <button class="assistant assistant-item" data-assistant="marketing" data-cat="marketing">
+          <span class="assistant-icon material-icons">trending_up</span>
+          <span class="assistant-label">Marketing</span>
+        </button>
+        <button class="assistant assistant-item" data-assistant="code" data-cat="codigo">
+          <span class="assistant-icon material-icons">code</span>
+          <span class="assistant-label">Programação</span>
+        </button>
+        <button class="assistant assistant-item" data-assistant="church" data-cat="igreja">
+          <span class="assistant-icon material-icons">church</span>
+          <span class="assistant-label">Igreja</span>
+        </button>
+      </nav>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-title">Modelo ativo</div>
+      <div class="model-card">
+        <div class="model-line">Claude</div>
+        <div class="model-line">GPT</div>
+        <div class="model-line">Gemini</div>
+        <div class="model-line">Ollama</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Center: holographic orb + voice bar -->
+  <section class="center">
+
+    <div class="greeting">
+      <div class="greeting-line">Olá, <span class="accent">Pauleanderson</span></div>
+      <div class="greeting-sub">O que você gostaria de realizar?</div>
+    </div>
+
+    <div class="orb-stage">
+      <div class="orb-wrap">
+        <div class="orb-ring orb-ring-1"></div>
+        <div class="orb-ring orb-ring-2"></div>
+        <div class="orb-ring orb-ring-3"></div>
+        <div class="orb-core"></div>
+      </div>
+      <div class="orb-status" id="orb-status">Pronto para ouvir</div>
+    </div>
+
+    <!-- Voice bar -->
+    <div class="voice-bar">
+      <div class="voice-wave" id="voice-wave">
+        <span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span>
+      </div>
+
+      <input type="text" id="ask-input" class="voice-input"
+             placeholder="Fale com o JARVIS ou digite aqui…" />
+
+      <button class="mic-btn" id="mic-btn" onclick="toggleMic()" title="Falar">
+        <span class="mic-icon" id="mic-icon">⌬</span>
+      </button>
+
+      <button class="interrupt-btn" id="interrupt-btn" onclick="interruptSpeech()" title="Interromper resposta">
+        <span>■</span>
+      </button>
+    </div>
+
+    <div class="voice-hint" id="voice-hint">
+      Fale e o JARVIS responde sozinho — sem precisar clicar.
+    </div>
+  </section>
+
+  <!-- Right sidebar: system overview + integrations -->
+  <aside class="sidebar sidebar-right">
+    <div class="sidebar-section">
+      <div class="sidebar-title">Visão geral do sistema</div>
+      <div class="system-grid">
+        <div class="sys-card">
+          <div class="sys-card-label">CPU</div>
+          <div class="sys-card-value" id="cpu-value">—</div>
+          <div class="sys-bar"><div class="sys-bar-fill" id="cpu-bar"></div></div>
+        </div>
+        <div class="sys-card">
+          <div class="sys-card-label">RAM</div>
+          <div class="sys-card-value" id="ram-value">—</div>
+          <div class="sys-bar"><div class="sys-bar-fill" id="ram-bar"></div></div>
+        </div>
+        <div class="sys-card">
+          <div class="sys-card-label">Internet</div>
+          <div class="sys-card-value">
+            <span id="internet-value">—</span>
+          </div>
+        </div>
+        <div class="sys-card">
+          <div class="sys-card-label">Disco</div>
+          <div class="sys-card-value" id="disk-value">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-title">Memória</div>
+      <div class="info-row">
+        <span class="info-key">Sessão</span>
+        <span class="info-val" id="session-uptime">0s</span>
+      </div>
+      <div class="info-row">
+        <span class="info-key">Boot</span>
+        <span class="info-val" id="boot-at">—</span>
+      </div>
+      <div class="info-row">
+        <span class="info-key">Histórico</span>
+        <span class="info-val" id="history-count">0</span>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-title">Ferramentas conectadas</div>
+      <div class="integration-list" id="integration-list">
+        <div class="loading-mini">Carregando…</div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-title">Notificações</div>
+      <div class="notif-list">
+        <div class="notif">
+          <div class="notif-dot dot-cyan"></div>
+          <div class="notif-text">Voz contínua PT-BR ativa</div>
+        </div>
+        <div class="notif">
+          <div class="notif-dot dot-violet"></div>
+          <div class="notif-text">Pesquisa web integrada</div>
+        </div>
+        <div class="notif">
+          <div class="notif-dot dot-green"></div>
+          <div class="notif-text">Sistema operacional</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<!-- ───────── Bottom drawer: chat history + tools ───────── -->
+<button class="drawer-toggle" id="drawer-toggle" onclick="toggleDrawer()">
+  <span class="drawer-toggle-icon">▾</span>
+  <span>Histórico & Ferramentas</span>
+</button>
+
+<section class="drawer" id="drawer">
+  <div class="drawer-tabs">
+    <button class="drawer-tab active" data-tab="chat">Conversa</button>
+    <button class="drawer-tab" data-tab="projects">Projetos</button>
+    <button class="drawer-tab" data-tab="research">Pesquisa</button>
+    <button class="drawer-tab" data-tab="weather">Clima</button>
+    <button class="drawer-tab" data-tab="image">Imagem</button>
+    <button class="drawer-tab" data-tab="controls">Controles</button>
+    <button class="drawer-tab" data-tab="logs">Logs</button>
+  </div>
+
+  <!-- Chat tab -->
+  <div class="drawer-panel active" id="panel-chat">
+    <div class="panel-header">
+      <h3>Histórico</h3>
+      <button class="ghost-btn" onclick="clearChat()">Limpar</button>
+    </div>
+    <div id="chat-list" class="chat-list">
+      <div class="empty">Nenhuma conversa ainda.</div>
+    </div>
+  </div>
+
+  <!-- Projects tab -->
+  <div class="drawer-panel" id="panel-projects">
+    <div class="panel-header">
+      <h3>Projetos & Memória</h3>
+      <span class="active-project-label" id="active-project-label">Contexto: automático</span>
+    </div>
+    <div class="projects-layout">
+      <div class="projects-list" id="projects-list">
+        <div class="loading-mini">Carregando projetos…</div>
+      </div>
+      <div class="projects-detail" id="projects-detail">
+        <div class="empty">Selecione um projeto à esquerda.</div>
+      </div>
+    </div>
+    <div class="project-update">
+      <input type="text" id="proj-section" placeholder="Seção (ex: Pendências)" />
+      <input type="text" id="proj-addition" placeholder="Adicionar conteúdo ao projeto ativo…" />
+      <button class="primary-btn" onclick="addToActiveProject()">Adicionar</button>
+    </div>
+  </div>
+
+  <!-- Research tab -->
+  <div class="drawer-panel" id="panel-research">
+    <div class="panel-header"><h3>Pesquisa Web</h3></div>
+    <div class="control-row">
+      <input type="text" id="research-input" placeholder="Ex: cotação do dólar hoje" />
+      <button class="primary-btn" onclick="research()">Pesquisar</button>
+    </div>
+    <div id="research-result" class="research-result"></div>
+  </div>
+
+  <!-- Weather tab -->
+  <div class="drawer-panel" id="panel-weather">
+    <div class="panel-header"><h3>Clima</h3></div>
+    <div class="control-row">
+      <input type="text" id="weather-input" placeholder="Cidade" />
+      <button class="primary-btn" onclick="checkWeather()">Buscar</button>
+    </div>
+    <div id="weather-result" class="info-block"></div>
+  </div>
+
+  <!-- Image tab -->
+  <div class="drawer-panel" id="panel-image">
+    <div class="panel-header"><h3>Geração de Imagem</h3></div>
+    <div class="control-row">
+      <input type="text" id="image-input" placeholder="Descreva a imagem…" />
+      <button class="primary-btn" onclick="generateImage()">Gerar</button>
+    </div>
+    <div id="image-result" class="image-result"></div>
+  </div>
+
+  <!-- Controls tab (volume/brightness/TTS) -->
+  <div class="drawer-panel" id="panel-controls">
+    <div class="panel-header"><h3>Controles do Sistema</h3></div>
+    <div class="control-stack">
+      <div class="control-block">
+        <label>Texto para falar</label>
+        <div class="control-row">
+          <input type="text" id="tts-input" placeholder="O que o Jarvis deve dizer?" />
+          <button class="primary-btn" onclick="speak()">Falar</button>
+        </div>
+      </div>
+      <div class="control-block">
+        <label>Volume do sistema: <span id="volume-label">50%</span></label>
+        <input type="range" min="0" max="100" value="50" id="volume-slider" />
+        <button class="primary-btn" onclick="setVolume()">Aplicar</button>
+      </div>
+      <div class="control-block">
+        <label>Brilho da tela: <span id="brightness-label">50%</span></label>
+        <input type="range" min="0" max="100" value="50" id="brightness-slider" />
+        <button class="primary-btn" onclick="setBrightness()">Aplicar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Logs tab -->
+  <div class="drawer-panel" id="panel-logs">
+    <div class="panel-header"><h3>Logs ao vivo</h3></div>
+    <pre id="logs" class="logs"></pre>
+  </div>
+</section>
+
+<footer class="footer">
+  <span class="footer-dot"></span>
+  <span class="footer-title">JARVIS v2.6.0</span>
+  <span class="footer-sep">·</span>
+  <span class="footer-tagline">Assistente pessoal inteligente · FreeAI · PT-BR</span>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

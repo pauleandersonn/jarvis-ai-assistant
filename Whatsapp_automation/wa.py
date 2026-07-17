@@ -1,39 +1,46 @@
-import pywhatkit as kit
-import datetime
-from TextToSpeech.Fast_DF_TTS import speak
-from os import getcwd
+"""WhatsApp automation — number is now configurable via env / runtime.
 
-now = datetime.datetime.now()
-hour = now.hour
-minute = now.minute
+The original file hard-coded the original author's personal phone number,
+which is unsafe to ship in a public repo. Replace the value below (or set
+the JARVIS_WA_RECIPIENT environment variable) before sending.
+"""
 
-def clear_file():
-    with open(f"{getcwd()}\\input.txt","w") as file:
-        file.truncate(0)
-        
-anubhav = "+919606348280"
+import os
+import time
 
-def send_msg_wa():
-    speak("who do you want to send sir ?")
-    output_text = ""
-    while True:
-        with open("input.txt","r") as file:
-            input_text = file.read().lower() 
-        if input_text != output_text:
-            output_text = input_text
-            if output_text.startswith("send to") or output_text.startswith("send tu"):
-                output_text.replace("send to","")
-                output_text.replace("send tu","")
-                if "anubhav" in output_text:
-                    speak("By the way what is the message , sir ?")
-                    while True:
-                       with open("input.txt","r") as file:
-                          input_text = file.read().lower() 
-                          if input_text != output_text:
-                              output_text = input_text
-                              if output_text.startswith("message is"):
-                                  message =  output_text.replace("message is","")
-                                  kit.sendwhatmsg(anubhav,message,hour,minute+1)
-                                  speak("message send successfully")
-                                 
+import pywhatkit
 
+# Recipient in international format (no "+", no spaces, no dashes).
+# You can override this by exporting JARVIS_WA_RECIPIENT in your shell.
+RECIPIENT = os.environ.get("JARVIS_WA_RECIPIENT", "0000000000")
+
+
+def send_msg_wa(*args, **kwargs) -> str:
+    """Backwards-compatible wrapper. Prompts for recipient and message."""
+    try:
+        recipient = (
+            kwargs.get("recipient")
+            or os.environ.get("JARVIS_WA_RECIPIENT")
+            or input("Recipient (intl format, no +): ").strip()
+        )
+        msg = kwargs.get("message") or input("Message: ").strip()
+        return send_wa(msg) if recipient else "No recipient provided."
+    except Exception as exc:  # noqa: BLE001
+        return f"WhatsApp send failed: {exc}"
+
+
+def send_wa(msg: str) -> str:
+    """Send a WhatsApp message via pywhatkit (uses WhatsApp Web)."""
+    recipient = os.environ.get("JARVIS_WA_RECIPIENT", RECIPIENT)
+    if recipient == "0000000000":
+        return (
+            "WhatsApp recipient not configured. "
+            "Set JARVIS_WA_RECIPIENT (international format, no '+') "
+            "and run again."
+        )
+    try:
+        pywhatkit.sendwhatmsg_instantly(recipient, msg, wait_time=10)
+        time.sleep(2)
+        return f"WhatsApp message sent to {recipient}"
+    except Exception as exc:  # noqa: BLE001
+        return f"WhatsApp send failed: {exc}"

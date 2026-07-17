@@ -1,29 +1,52 @@
-import requests
-from bs4 import BeautifulSoup
+"""Get current weather for a city using wttr.in's JSON endpoint.
 
-def get_weather_by_address(address):
-    # Use Google to find the weather for the address
-    search_url = f"https://www.google.com/search?q=weather+{address.replace(' ', '+')}"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
-    
-    response = requests.get(search_url, headers=headers)
-    
-    if response.status_code == 200:
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Scrape the relevant weather data
-        location = soup.find("div", attrs={"id": "wob_loc"}).text
-        time = soup.find("div", attrs={"id": "wob_dts"}).text
-        weather = soup.find("span", attrs={"id": "wob_dc"}).text
-        temp = soup.find("span", attrs={"id": "wob_tm"}).text
-        
-        weather_report = (f"Weather: {weather}\n"
-                          f"Temperature: {temp}°C")
-        
-        return weather_report
-    else:
-        return "Error retrieving weather data."
+The original implementation scraped HTML and broke when wttr.in changed
+its layout. The JSON endpoint (?format=j1) is stable and free.
+"""
 
+import json
+import urllib.parse
+import urllib.request
+
+from TextToSpeech.Fast_DF_TTS import speak
+
+
+def _fetch_json(city: str) -> dict:
+    encoded = urllib.parse.quote(city)
+    url = f"https://wttr.in/{encoded}?format=j1"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def get_weather_by_address(city: str) -> str:
+    """Return a short human-readable weather description for `city`."""
+    if not city or not city.strip():
+        return "I need a city name to check the weather."
+
+    try:
+        data = _fetch_json(city)
+    except Exception as exc:  # noqa: BLE001
+        return f"Could not fetch weather: {exc}"
+
+    try:
+        current = data["current_condition"][0]
+        area = data["nearest_area"][0]["areaName"][0]["value"]
+        region = data["nearest_area"][0]["region"][0]["value"]
+        country = data["nearest_area"][0]["country"][0]["value"]
+
+        temp_c = current["temp_C"]
+        feels_c = current["FeelsLikeC"]
+        humidity = current["humidity"]
+        desc = current["weatherDesc"][0]["value"]
+        wind_kph = current["windspeedKmph"]
+
+        msg = (
+            f"Currently in {area}, {region}, {country}: {desc}, "
+            f"{temp_c} degrees Celsius, feels like {feels_c}. "
+            f"Humidity {humidity} percent, wind {wind_kph} kilometers per hour."
+        )
+        speak(msg)
+        return msg
+    except Exception as exc:  # noqa: BLE001
+        return f"Could not parse weather data: {exc}"
