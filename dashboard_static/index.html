@@ -101,11 +101,45 @@
     </div>
 
     <div class="orb-stage">
-      <div class="orb-wrap">
-        <div class="orb-ring orb-ring-1"></div>
-        <div class="orb-ring orb-ring-2"></div>
-        <div class="orb-ring orb-ring-3"></div>
-        <div class="orb-core"></div>
+      <!-- ═══ ORB CENTRAL — 7 layers + glow + halo (spec v2.6.1) ═══ -->
+      <div class="orb-wrap" id="jarvis-orb">
+        <!-- Glow outer (radial pulsante 4s) -->
+        <div class="orb-glow-outer"></div>
+        <!-- Halo metric ring -->
+        <svg class="orb-halo" viewBox="0 0 420 420">
+          <circle cx="210" cy="210" r="200" />
+        </svg>
+        <!-- Layer 1: outer ring conic -->
+        <svg class="orb-layer-1" viewBox="0 0 420 420">
+          <circle class="orb-conic-ring" cx="210" cy="210" r="195" />
+        </svg>
+        <!-- Layer 2: organic curve lines (24 paths) -->
+        <svg class="orb-layer-2" viewBox="0 0 420 420" id="orb-curves"></svg>
+        <!-- Layer 3: inner concentric rings (160/120/80) -->
+        <svg class="orb-layer-3" viewBox="0 0 420 420">
+          <circle class="orb-inner-ring r-160" cx="210" cy="210" r="160" />
+          <circle class="orb-inner-ring r-120" cx="210" cy="210" r="120" />
+          <circle class="orb-inner-ring r-80"  cx="210" cy="210" r="80" />
+        </svg>
+        <!-- Layer 4: particle orbs (6 dots) -->
+        <div class="orb-particles">
+          <span class="orb-particle" style="left:40px;top:80px"></span>
+          <span class="orb-particle p-white" style="left:340px;top:120px"></span>
+          <span class="orb-particle p-purple" style="left:280px;top:340px"></span>
+          <span class="orb-particle p-indigo" style="left:80px;top:320px"></span>
+          <span class="orb-particle p-cyan-sm" style="left:200px;top:60px"></span>
+          <span class="orb-particle p-pink" style="left:360px;top:260px"></span>
+        </div>
+        <!-- Layer 5: inner core (radial fill) -->
+        <div class="orb-inner-core"></div>
+        <!-- Layer 6: central text -->
+        <div class="orb-center-text">JARVIS</div>
+        <!-- Layer 7: vertical accent line -->
+        <div class="orb-accent-line"></div>
+        <!-- Highlights -->
+        <div class="orb-highlight hl-tl"></div>
+        <div class="orb-highlight hl-rc"></div>
+        <div class="orb-highlight hl-bc"></div>
       </div>
       <div class="orb-status" id="orb-status">Pronto para ouvir</div>
     </div>

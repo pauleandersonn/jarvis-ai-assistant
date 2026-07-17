@@ -1,0 +1,4 @@
+Set-Location 'C:\Users\paule\Projects\jarvis-ai-assistant'
+git add -A
+git commit -m 'feat(orb): implementar orb v2.6.1 com 7 layers do Figma spec' -m 'index.html: estrutura completa do orb (glow outer, halo, conic ring, 24 curvas, 3 inner rings, 6 particles, inner core, texto central, accent line, 3 highlights). style.css: 7 layers + 6 keyframes (glow-pulse 4s, curves-rotate 60s, breathe 3s, particles-rotate 80s, twinkle 2s, text-pulse 4s) + variacoes por estado listening/thinking/speaking. app.js: buildOrbCurves gera 24 paths bezier organicos em SVG dinamicamente, buildOrbParticles aplica rotacao. Responsive: orb-wrap encolhe pra 320px em telas menores que 1100px.'
+git push origin main

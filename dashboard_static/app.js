@@ -4,6 +4,60 @@
 // para ver logs de mic/reconhecimento durante desenvolvimento.
 window.JARVIS_DEBUG = window.JARVIS_DEBUG || false;
 
+// ───────── Geração das 24 curvas orgânicas (Layer 2 do orb) ─────────
+// Padrão: linhas bezier tangenciais que se cruzam formando "fibras entrelaçadas",
+// evocando meridianos de uma esfera 3D. Rotação contínua -15deg → 60s clockwise.
+function buildOrbCurves() {
+  const svg = document.getElementById("orb-curves");
+  if (!svg) return;
+  const cx = 210, cy = 210;
+  const colors = ["#22D3EE", "#5B6CFF", "#A855F7", "#7C3AED", "#EC4899"];
+  const NS = "http://www.w3.org/2000/svg";
+  const N = 24;
+
+  for (let i = 0; i < N; i++) {
+    // Cada curva é um meridiano: começa em y=10, vai ao outro lado do círculo,
+    // passando por um ponto de controle deslocado horizontalmente.
+    const angle = (i / N) * Math.PI * 2;
+    const wobble = 30 + Math.random() * 60;
+    const sideSign = Math.random() < 0.5 ? -1 : 1;
+
+    const startX = cx + Math.cos(angle) * 200;
+    const startY = cy + Math.sin(angle) * 200;
+    const endX = cx - Math.cos(angle) * 200;
+    const endY = cy - Math.sin(angle) * 200;
+    // Pontos de controle bezier: empurram a curva para um lado e o outro,
+    // criando o efeito de "fibra" passando pelo centro.
+    const cp1X = cx + sideSign * (wobble + 80);
+    const cp1Y = cy + Math.sin(angle) * 60;
+    const cp2X = cx - sideSign * (wobble + 80);
+    const cp2Y = cy - Math.sin(angle) * 60;
+
+    const path = document.createElementNS(NS, "path");
+    path.setAttribute(
+      "d",
+      `M ${startX} ${startY} C ${cp1X} ${cp1Y}, ${cp2X} ${cp2Y}, ${endX} ${endY}`
+    );
+    path.setAttribute("stroke", colors[i % colors.length]);
+    path.setAttribute("stroke-width", 0.8 + Math.random() * 0.7);
+    path.setAttribute("fill", "none");
+    path.setAttribute("opacity", 0.5 + Math.random() * 0.4);
+    path.setAttribute("stroke-linecap", "round");
+    path.classList.add("orb-curve");
+    svg.appendChild(path);
+  }
+}
+
+// ───────── Particle orbit (Layer 4) ─────────
+// Mantém as 6 partículas girando lentamente ao redor do orb pra dar
+// sensação de órbita. Complementa o twinkle de brilho já no CSS.
+function buildOrbParticles() {
+  const wrap = document.querySelector(".orb-particles");
+  if (!wrap) return;
+  wrap.style.transformOrigin = "50% 50%";
+  wrap.classList.add("orb-particles-rotate");
+}
+
 const state = {
   ws: null,
   statusInterval: null,
@@ -720,4 +774,8 @@ if (window.JARVIS_DEBUG) {
   console.log("[jarvis] dashboard inicializado, SpeechRecognition=" +
     ((window.SpeechRecognition || window.webkitSpeechRecognition) ? "ok" : "indisponível"));
 }
+
+// Build do orb (curvas + partículas)
+buildOrbCurves();
+buildOrbParticles();
 setInterval(refreshChat, 5000);
