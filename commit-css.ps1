@@ -1,0 +1,4 @@
+Set-Location 'C:\Users\paule\Projects\jarvis-ai-assistant'
+git add -A
+git commit -m 'feat(css): upgrade tokens + aplicar animacoes premium da spec 2.6.0' -m 'Tokens: --bg-canvas/surface/card, --brand-blue/purple/cyan/pink, --semantic success/warning/error/info, --shadow-sm/md/lg/xl/glow-blue/glow-cyan/glow-purple, --radius-xs/2xl/full, --font-display/mono, --z-content/header/modal, --transition-fast/base/slow, --gradient-brand/primary/orb/progress/voice. Body com radial-gradient escuro + 4 overlays coloridos nos cantos. Animacoes: logoPulse 3s no brand-mark, micRipple 2s expansivo no mic-btn, voiceWave alias pra wave-dance, statusPulse 2s no status-dot (substitui dot-pulse).'
+git push origin main

@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════
    JARVIS UI v2.6 — premium dark glassmorphism
-   Palette: #05070C #5B6CFF #A855F7 #22D3EE #EC4899 #10B981
+   Tokens: design system padronizado + paleta #5B6CFF #A855F7 #22D3EE #EC4899 #10B981
    ═══════════════════════════════════════════════════════════════ */
 
 :root {
@@ -8,19 +8,50 @@
   --bg-canvas: #05070C;
   --bg-0: #05070C;
   --bg-1: #0B0F1A;
-  --bg-2: #11172A;
-  --bg-3: #1A2238;
+  --bg-2: #0F1424;
+  --bg-3: #11172A;
+  --bg-4: #1A2238;
+  --bg-surface: #0B0F1A;
+  --bg-surface-2: #0F1424;
+  --bg-card: rgba(15, 20, 36, 0.6);
+  --bg-card-solid: #0F1424;
+  --bg-overlay: rgba(0, 0, 0, 0.5);
 
-  /* Brand colors v2.6 */
-  --primary: #5B6CFF;        /* blue */
-  --secondary: #A855F7;      /* purple */
-  --accent: #22D3EE;         /* cyan */
-  --pink: #EC4899;           /* pink */
-  --success: #10B981;        /* green */
+  /* Borders */
+  --border-subtle: rgba(255, 255, 255, 0.05);
+  --border-default: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --border: var(--border-subtle);
+
+  /* Text */
+  --text: #FFFFFF;
+  --text-primary: #FFFFFF;
+  --text-secondary: #A1A8B8;
+  --text-tertiary: #6B7180;
+  --text-quaternary: #4B5160;
+  --text-dim: #A1A8B8;
+  --text-muted: #6B7180;
+
+  /* Brand */
+  --primary: #5B6CFF;
+  --brand-blue: #5B6CFF;
+  --secondary: #A855F7;
+  --brand-purple: #A855F7;
+  --brand-violet: #7C3AED;
+  --accent: #22D3EE;
+  --brand-cyan: #22D3EE;
+  --pink: #EC4899;
+  --brand-pink: #EC4899;
+
+  /* Semantic */
+  --success: #10B981;
+  --warning: #F59E0B;
   --amber: #F59E0B;
+  --error: #EF4444;
   --red: #EF4444;
+  --info: #3B82F6;
 
-  /* Aliases (legacy) */
+  /* Aliases (compat com código antigo) */
   --cyan: #22D3EE;
   --cyan-dim: rgba(34, 211, 238, 0.5);
   --violet: #A855F7;
@@ -29,28 +60,70 @@
   --primary-dim: rgba(91, 108, 255, 0.5);
   --green: #10B981;
 
-  /* Text */
-  --text: #FFFFFF;
-  --text-dim: #9CA3AF;
-  --text-muted: #6B7180;
-  --text-secondary: #9CA3AF;
-
-  /* Borders */
-  --border: rgba(255, 255, 255, 0.06);
-  --border-strong: rgba(255, 255, 255, 0.12);
-
   /* Shadows */
-  --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.4);
-  --shadow-glow: 0 0 40px rgba(91, 108, 255, 0.15);
-  --shadow-glow-purple: 0 0 60px rgba(168, 85, 247, 0.20);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 24px 48px rgba(0, 0, 0, 0.6);
+  --shadow-soft: var(--shadow-lg);
+  --glow-blue: 0 0 24px rgba(91, 108, 255, 0.35);
+  --glow-cyan: 0 0 32px rgba(34, 211, 238, 0.4);
+  --glow-purple: 0 0 32px rgba(168, 85, 247, 0.4);
+  --shadow-glow: var(--glow-blue);
+  --shadow-glow-purple: var(--glow-purple);
+  --inset-top: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 
-  /* Gradients */
+  /* Blur */
+  --blur-sm: blur(4px);
+  --blur-md: blur(8px);
+  --blur-lg: blur(16px);
+  --blur-xl: blur(20px);
+  --blur-glow: blur(40px);
+
+  /* Radius */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
+  --radius-full: 9999px;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Typography */
+  --font-primary: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: 'Space Grotesk', 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Z-index */
+  --z-bg: 0;
+  --z-content: 10;
+  --z-header: 50;
+  --z-modal: 100;
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-base: 250ms ease;
+  --transition-slow: 400ms ease;
+
+  /* Gradients (padronizados) */
   --gradient-brand: linear-gradient(135deg, #5B6CFF 0%, #A855F7 100%);
-  --gradient-orb: linear-gradient(135deg, #22D3EE 0%, #5B6CFF 50%, #A855F7 100%);
-  --gradient-progress: linear-gradient(90deg, #5B6CFF 0%, #A855F7 50%, #EC4899 100%);
+  --gradient-primary: linear-gradient(135deg, #5B6CFF 0%, #A855F7 50%, #22D3EE 100%);
+  --gradient-orb: conic-gradient(from 0deg, #22D3EE, #5B6CFF, #A855F7, #EC4899, #22D3EE);
+  --gradient-progress: linear-gradient(90deg, #5B6CFF, #A855F7, #EC4899);
+  --gradient-voice: linear-gradient(90deg, rgba(34, 211, 238, 0.2), #5B6CFF, rgba(168, 85, 247, 0.2));
 }
 
-* {
+/* Reset & base */
+*, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
@@ -58,46 +131,60 @@
 
 html, body {
   height: 100%;
-  background: var(--bg-canvas);
-  color: var(--text);
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  font-weight: 400;
-  letter-spacing: -0.01em;
   overflow: hidden;
 }
 
 body {
-  background:
-    radial-gradient(ellipse 80% 60% at 20% 0%, rgba(91, 108, 255, 0.18), transparent 55%),
-    radial-gradient(ellipse 70% 50% at 80% 0%, rgba(168, 85, 247, 0.16), transparent 55%),
-    radial-gradient(ellipse 60% 40% at 50% 100%, rgba(34, 211, 238, 0.10), transparent 60%),
-    radial-gradient(ellipse 50% 35% at 90% 80%, rgba(236, 72, 153, 0.08), transparent 60%),
-    var(--bg-canvas);
+  font-family: var(--font-primary);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-canvas);
+  background-image:
+    radial-gradient(ellipse at center, #0B1024 0%, #070A18 50%, #03050D 100%);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-weight: 400;
+  letter-spacing: -0.01em;
   display: flex;
   flex-direction: column;
   position: relative;
 }
 
-/* Noise + vignette overlay for premium feel */
+/* Overlay de gradientes coloridos nos cantos (acima do background, abaixo do conteúdo) */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
-  z-index: 1;
+  z-index: 0;
   background:
-    radial-gradient(circle at center, transparent 40%, rgba(0,0,0,0.4) 100%);
+    radial-gradient(ellipse 80% 60% at 20% 0%, rgba(91, 108, 255, 0.18), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 80% 0%, rgba(168, 85, 247, 0.16), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 50% 100%, rgba(34, 211, 238, 0.10), transparent 60%),
+    radial-gradient(ellipse 50% 35% at 90% 80%, rgba(236, 72, 153, 0.08), transparent 60%);
 }
 
+/* Vignette sutil pra dar profundidade */
 body::after {
   content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 1;
-  opacity: 0.025;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background: radial-gradient(circle at center, transparent 40%, rgba(0, 0, 0, 0.4) 100%);
+}
+
+button {
+  font-family: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+}
+
+ul, ol {
+  list-style: none;
 }
 
 /* ───────── Top bar ───────── */
@@ -145,6 +232,12 @@ body::after {
   -webkit-text-fill-color: transparent;
   background-clip: text;
   filter: drop-shadow(0 0 12px var(--primary-dim));
+  animation: logoPulse 3s ease-in-out infinite;
+}
+
+@keyframes logoPulse {
+  0%, 100% { filter: drop-shadow(0 0 12px rgba(34, 211, 238, 0.5)); }
+  50%      { filter: drop-shadow(0 0 20px rgba(34, 211, 238, 0.8)); }
 }
 
 .brand-name {
@@ -178,12 +271,12 @@ body::after {
   border-radius: 50%;
   background: currentColor;
   box-shadow: 0 0 8px currentColor;
-  animation: dot-pulse 2s ease-in-out infinite;
+  animation: statusPulse 2s ease-in-out infinite;
 }
 
-@keyframes dot-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50%      { opacity: 0.6; transform: scale(0.9); }
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
 }
 
 .orb-mini {
@@ -961,6 +1054,12 @@ body.state-speaking .voice-wave span {
   50% { height: 60%; opacity: 0.9; }
 }
 
+/* alias premium da spec */
+@keyframes voiceWave {
+  0%, 100% { transform: scaleY(1); }
+  50%      { transform: scaleY(0.5); }
+}
+
 .voice-input {
   flex: 1;
   background: transparent;
@@ -1003,12 +1102,18 @@ body.state-speaking .voice-wave span {
 }
 
 body.state-listening .mic-btn {
-  animation: mic-pulse 1.4s infinite ease-in-out;
+  animation: micRipple 2s ease-out infinite;
 }
 
 @keyframes mic-pulse {
   0%, 100% { box-shadow: 0 0 16px var(--primary); }
   50% { box-shadow: 0 0 32px var(--primary), 0 0 48px var(--violet-dim); }
+}
+
+/* Spec premium: mic ripple — pulse expansivo com box-shadow */
+@keyframes micRipple {
+  0%   { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.5); }
+  100% { box-shadow: 0 0 0 24px rgba(34, 211, 238, 0); }
 }
 
 .interrupt-btn {
