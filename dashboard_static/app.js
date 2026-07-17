@@ -1,10 +1,21 @@
 // ───────── State ─────────
+// JARVIS_DEBUG = false em produção. Liga no console do navegador:
+//   window.JARVIS_DEBUG = true; location.reload();
+// para ver logs de mic/reconhecimento durante desenvolvimento.
+window.JARVIS_DEBUG = window.JARVIS_DEBUG || false;
+
 const state = {
   ws: null,
   statusInterval: null,
   chatInterval: null,
   recognition: null,
   micListening: false,
+  // userWantsMic = true quando o usuário CLICOU pra ligar o mic.
+  // Se o engine termina sozinho (no-speech, network), reiniciamos.
+  // Se for false (usuário clicou pra parar), não reiniciamos.
+  userWantsMic: false,
+  micRestartTimer: null,
+  finalTranscriptTimer: null,
   continuousMode: false,
   drawerOpen: false,
   activeTab: "chat",
@@ -387,6 +398,15 @@ async function clearChat() {
 }
 
 // ───────── Speech recognition (Web Speech API) ─────────
+// Estado do mic: queremos distinguir "usuário clicou pra parar" de
+// "engine terminou sozinho por timeout (no-speech)".
+// userWantsMic=true significa: o usuário QUER o mic aberto. Se o engine
+// terminar sozinho (onend), reiniciamos. Se o usuário clicou pra parar,
+// não reiniciamos.
+const SR_ERR_FATAL = new Set(["not-allowed", "service-not-allowed", "audio-capture"]);
+const SR_ERR_RECOVERABLE = new Set(["no-speech", "aborted", "network"]);
+const SR_RETRY_DELAY_MS = 600;
+
 function initSpeechRecognition() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
@@ -394,12 +414,15 @@ function initSpeechRecognition() {
     if (hint) hint.textContent = "Reconhecimento de voz não suportado neste navegador. Use Chrome ou Edge.";
     const btn = document.getElementById("mic-btn");
     if (btn) btn.disabled = true;
+    if (window.JARVIS_DEBUG) console.warn("[mic] SpeechRecognition indisponível");
     return null;
   }
 
   const recognition = new SR();
   recognition.lang = "pt-BR";
-  recognition.continuous = false;
+  // Modo conversação: continuous=true deixa o engine aberto entre utterances.
+  // O auto-restart é controlado por userWantsMic, não pelo engine.
+  recognition.continuous = true;
   recognition.interimResults = true;
   recognition.maxAlternatives = 1;
 
@@ -408,6 +431,7 @@ function initSpeechRecognition() {
     setState("listening");
     const input = document.getElementById("ask-input");
     if (input) input.placeholder = "Fale agora…";
+    if (window.JARVIS_DEBUG) console.log("[mic] onstart");
   };
 
   recognition.onresult = (event) => {
@@ -417,30 +441,77 @@ function initSpeechRecognition() {
       if (event.results[i].isFinal) final += t;
       else interim += t;
     }
+    const text = (final || interim).trim();
     const input = document.getElementById("ask-input");
-    if (input) input.value = (final || interim).trim();
+    if (input) input.value = text;
 
     if (final.trim()) {
+      // Reset do timer de auto-send a cada utterance final.
       clearTimeout(state.finalTranscriptTimer);
       state.finalTranscriptTimer = setTimeout(() => {
-        if (state.micListening) {
-          try { recognition.stop(); } catch (e) {}
+        // Só dispara ask() se o usuário deixou texto válido.
+        const current = document.getElementById("ask-input");
+        if (current && current.value.trim() && state.userWantsMic) {
+          if (window.JARVIS_DEBUG) console.log("[mic] auto-send (1.5s silence)");
+          // stop() vai disparar onend, que por sua vez respeita userWantsMic
+          // e decide se reinicia. Aqui só pedimos pra parar de ouvir.
+          try { recognition.stop(); } catch (e) { /* noop */ }
+          ask();
         }
-        ask();
       }, 1500);
     }
   };
 
   recognition.onerror = (e) => {
-    console.error("recognition error:", e.error);
-    setState("idle");
+    const err = e.error || "unknown";
     state.micListening = false;
+
+    // Mensagens amigáveis no UI
+    const hint = document.getElementById("voice-hint");
+    if (err === "not-allowed" || err === "service-not-allowed") {
+      if (hint) hint.textContent = "Permissão de microfone negada. Habilite nas configurações do navegador.";
+      state.userWantsMic = false;
+      if (window.JARVIS_DEBUG) console.error("[mic] permissão negada:", err);
+    } else if (err === "audio-capture") {
+      if (hint) hint.textContent = "Nenhum microfone detectado. Conecte um microfone e tente de novo.";
+      state.userWantsMic = false;
+      if (window.JARVIS_DEBUG) console.error("[mic] sem captura de áudio:", err);
+    } else if (SR_ERR_RECOVERABLE.has(err)) {
+      // no-speech, aborted, network — não é erro fatal, só não ouviu nada.
+      // onend vai disparar e o auto-restart cuida.
+      if (window.JARVIS_DEBUG) console.warn("[mic] recoverable:", err);
+    } else {
+      if (window.JARVIS_DEBUG) console.warn("[mic] erro desconhecido:", err);
+    }
+
+    if (state.userWantsMic && SR_ERR_FATAL.has(err)) {
+      // Erro fatal (sem permissão / sem mic): cancela a intenção do usuário.
+      state.userWantsMic = false;
+    }
+
+    setState("idle");
   };
 
   recognition.onend = () => {
     state.micListening = false;
     const input = document.getElementById("ask-input");
     if (input) input.placeholder = "Fale com o JARVIS ou digite aqui…";
+    if (window.JARVIS_DEBUG) console.log("[mic] onend, userWantsMic=" + state.userWantsMic);
+
+    // Auto-restart inteligente: só reinicia se o usuário QUER o mic aberto
+    // e o último erro não foi fatal.
+    if (state.userWantsMic && state.recognition === recognition) {
+      clearTimeout(state.micRestartTimer);
+      state.micRestartTimer = setTimeout(() => {
+        if (state.userWantsMic && !state.micListening) {
+          try { recognition.start(); }
+          catch (e) {
+            // InvalidStateError: já está rodando — ignora.
+            if (window.JARVIS_DEBUG) console.warn("[mic] restart falhou:", e.name);
+          }
+        }
+      }, SR_RETRY_DELAY_MS);
+    }
     if (state.currentState === "listening") setState("idle");
   };
 
@@ -452,19 +523,27 @@ function startMic() {
     state.recognition = initSpeechRecognition();
     if (!state.recognition) return;
   }
+  state.userWantsMic = true;
   if (state.micListening) return;
   const input = document.getElementById("ask-input");
   if (input) input.value = "";
   try {
     state.recognition.start();
   } catch (e) {
-    console.error("start:", e);
+    // InvalidStateError significa que já está rodando — não é erro real.
+    if (e && e.name !== "InvalidStateError") {
+      if (window.JARVIS_DEBUG) console.error("[mic] start falhou:", e);
+    }
   }
 }
 
 function stopMic() {
+  // Usuário pediu pra parar — desliga auto-restart.
+  state.userWantsMic = false;
+  clearTimeout(state.micRestartTimer);
+  clearTimeout(state.finalTranscriptTimer);
   if (state.recognition && state.micListening) {
-    try { state.recognition.stop(); } catch (e) {}
+    try { state.recognition.stop(); } catch (e) { /* noop */ }
   }
 }
 
@@ -473,7 +552,8 @@ function toggleMic() {
     state.recognition = initSpeechRecognition();
     if (!state.recognition) return;
   }
-  if (state.micListening) {
+  // toggleMic alterna intenção do usuário, não só estado do engine.
+  if (state.userWantsMic && state.micListening) {
     stopMic();
   } else {
     startMic();
@@ -633,4 +713,11 @@ updateClock();
 setInterval(updateClock, 1000);
 setInterval(refreshSystem, 3000);
 setInterval(refreshIntegrations, 30000);
+setInterval(refreshChat, 5000);
+
+// Log de boot em dev
+if (window.JARVIS_DEBUG) {
+  console.log("[jarvis] dashboard inicializado, SpeechRecognition=" +
+    ((window.SpeechRecognition || window.webkitSpeechRecognition) ? "ok" : "indisponível"));
+}
 setInterval(refreshChat, 5000);

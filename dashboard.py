@@ -16,7 +16,7 @@ import threading
 import time
 from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -57,6 +57,25 @@ def index() -> str:
     if not html_path.exists():
         return "<h1>dashboard_static/index.html missing</h1>"
     return html_path.read_text(encoding="utf-8")
+
+
+# ---------- Favicon (corta 404 do /favicon.ico automático do navegador) ----------
+@app.get("/favicon.ico", include_in_schema=False)
+@app.get("/favicon.svg", include_in_schema=False)
+def favicon() -> Response:
+    """Retorna um SVG inline como favicon para silenciar o 404 automático do navegador.
+    O SVG é o mesmo gradiente do logo JARVIS (azul→roxo→ciano)."""
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+        '<defs><radialGradient id="g" cx="30%" cy="30%">'
+        '<stop offset="0" stop-color="#22D3EE"/>'
+        '<stop offset="0.5" stop-color="#5B6CFF"/>'
+        '<stop offset="1" stop-color="#A855F7"/>'
+        '</radialGradient></defs>'
+        '<circle cx="16" cy="16" r="14" fill="url(#g)"/>'
+        '</svg>'
+    )
+    return Response(content=svg, media_type="image/svg+xml")
 
 
 # ---------- Status endpoint ----------
