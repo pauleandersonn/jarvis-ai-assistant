@@ -160,6 +160,55 @@ def speak(text: str) -> str:
     return result
 
 
+def speak_to_file(text: str) -> str:
+    """Render `text` to a WAV file via SAPI5 and return its path.
+
+    Server-side helper for the dashboard /api/speak endpoint: we want
+    to GENERATE the audio but NOT play it on the server (server playback
+    goes through speakers attached to the host machine, not the user's
+    headphones). The browser fetches the resulting WAV and plays it
+    locally.
+    """
+    print(f"[tts] speak_to_file: len={len(text or '')}")
+    clean = _clean_for_speech(text)
+    if not clean:
+        raise ValueError("Nothing to say (empty after clean).")
+    if _has_meta_content(clean):
+        raise ValueError(f"meta-talk blocked: {clean[:80]}...")
+    clean = _smart_truncate(clean, max_chars=600)
+
+    speaker = None
+    stream = None
+    try:
+        wav_path = TMP_DIR / f"jarvis_{int(time.time()*1000)}.wav"
+        wav_path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"[tts] target wav: {wav_path}")
+
+        speaker = _new_speaker()
+        stream = win32com.client.Dispatch("SAPI.SpFileStream")
+        stream.Format.Type = 22
+        stream.Open(str(wav_path), 3, False)
+        speaker.AudioOutputStream = stream
+        speaker.Speak(clean, 0)
+        stream.Close()
+        stream = None
+        speaker.AudioOutputStream = None
+        size = wav_path.stat().st_size if wav_path.exists() else 0
+        print(f"[tts] wav written: size={size}")
+        return str(wav_path)
+    finally:
+        try:
+            if stream is not None:
+                stream.Close()
+        except Exception:
+            pass
+        try:
+            if speaker is not None:
+                speaker.AudioOutputStream = None
+        except Exception:
+            pass
+
+
 def speak_with_audio(text: str, audio_file: str | None = None) -> str:
     """Render `text` to a WAV file, then play it via os.startfile.
 
@@ -167,12 +216,15 @@ def speak_with_audio(text: str, audio_file: str | None = None) -> str:
     opens it with the default player, audio comes out. Direct SAPI5
     playback silently fails inside the uvicorn worker process.
     """
+    print(f"[tts] speak_with_audio: len={len(text or '')}")
     clean = _clean_for_speech(text)
     if not clean:
+        print("[tts] skip: empty after clean")
         return "Nothing to say."
 
     # Bloqueia meta-fala (LLM falando sobre si mesmo em vez de responder).
     if _has_meta_content(clean):
+        print(f"[tts] skip: meta-content detected")
         return f"[skip meta-talk: {clean[:80]}...]"
 
     # Encurta respostas longas pra nao gerar WAVs gigantes.
@@ -186,6 +238,7 @@ def speak_with_audio(text: str, audio_file: str | None = None) -> str:
             else TMP_DIR / f"jarvis_{int(time.time()*1000)}.wav"
         )
         wav_path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"[tts] target wav: {wav_path}")
 
         speaker = _new_speaker()
         stream = win32com.client.Dispatch("SAPI.SpFileStream")
@@ -200,13 +253,16 @@ def speak_with_audio(text: str, audio_file: str | None = None) -> str:
         stream.Close()
         stream = None
         speaker.AudioOutputStream = None
+        print(f"[tts] wav written: size={wav_path.stat().st_size if wav_path.exists() else 0}")
 
         # Reproduz o WAV DIRETAMENTE via sounddevice (sem abrir player externo).
         # Antes usavamos os.startfile(), que abria o Windows Media Player toda vez
         # e acumulava instancias em background tocando o mesmo audio em loop.
         _play_wav_blocking(str(wav_path))
+        print(f"[tts] playback OK: {wav_path}")
         return f"Played: {wav_path}"
     except Exception as exc:  # noqa: BLE001
+        print(f"[tts] ERROR: {exc}")
         return f"Audio playback error: {exc}"
     finally:
         try:

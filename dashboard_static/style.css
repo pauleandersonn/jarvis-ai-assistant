@@ -1101,6 +1101,39 @@ body.state-speaking .voice-wave span {
   transform: scale(0.96);
 }
 
+/* Botão "Ativar audio" — desbloqueia o gate de autoplay do navegador. */
+.enable-audio-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  height: 44px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, #5B6CFF 0%, #A855F7 100%);
+  border: none;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+  box-shadow: 0 0 16px var(--primary-dim);
+  white-space: nowrap;
+}
+.enable-audio-btn:hover {
+  transform: scale(1.03);
+  box-shadow: 0 0 24px var(--primary), 0 0 48px var(--violet-dim);
+}
+.enable-audio-btn.audio-active {
+  background: linear-gradient(135deg, #10B981 0%, #22D3EE 100%);
+  color: #001018;
+}
+.enable-audio-btn.audio-active:hover {
+  box-shadow: 0 0 24px #10B981, 0 0 48px #22D3EE;
+}
+.enable-audio-btn .material-icons {
+  font-size: 18px;
+}
+
 body.state-listening .mic-btn {
   animation: micRipple 2s ease-out infinite;
 }

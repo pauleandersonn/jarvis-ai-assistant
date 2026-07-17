@@ -78,7 +78,6 @@ const state = {
   lastAnswer: "",
   historyCount: 0,
   speechTimer: null,
-  finalTranscriptTimer: null,
   projects: [],
   activeProject: null,
 };
@@ -273,24 +272,252 @@ async function refreshChat() {
 }
 
 // ───────── Voice: TTS ─────────
+
+// Chrome/Edge/Firefox gate audio.play() behind a user gesture. We expose
+// an "Ativar audio" button so the user grants permission explicitly
+// instead of the browser silently swallowing the first audio.play().
+let audioUnlocked = false;
+
+function enableAudio() {
+  audioUnlocked = true;
+  const label = document.getElementById("enable-audio-label");
+  const btn = document.getElementById("enable-audio-btn");
+  if (label) label.textContent = "Audio ativo";
+  if (btn) btn.classList.add("audio-active");
+  try {
+    // ~50ms of silence as a valid WAV blob. Play it muted so the browser
+    // marks the document as user-activated for future audio.play() calls.
+    const silent = new Uint8Array([
+      0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45,
+      0x66, 0x6d, 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+      0x44, 0xac, 0x00, 0x00, 0x88, 0x58, 0x01, 0x00, 0x02, 0x00, 0x10, 0x00,
+      0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    const blob = new Blob([silent], { type: "audio/wav" });
+    const url = URL.createObjectURL(blob);
+    const a = new Audio(url);
+    a.volume = 0;
+    a.muted = true;
+    const p = a.play();
+    if (p && typeof p.then === "function") {
+      p.then(() => URL.revokeObjectURL(url)).catch(() => URL.revokeObjectURL(url));
+    } else {
+      URL.revokeObjectURL(url);
+    }
+  } catch (e) {
+    console.warn("enableAudio:", e);
+  }
+  if (window.JARVIS_DEBUG) console.log("[audio] unlocked by user gesture");
+}
+
+async function fetchTtsBlob(text) {
+  // Server returns raw WAV bytes (Content-Type: audio/wav) + X-Duration-Seconds
+  // header. We blob() it client-side and play with HTMLAudioElement.
+  const r = await fetch("/api/speak", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  if (!r.ok) throw new Error("speak HTTP " + r.status);
+  const blob = await r.blob();
+  const durHeader = r.headers.get("X-Duration-Seconds");
+  const duration = durHeader ? parseFloat(durHeader) : 0;
+  return { blob, duration };
+}
+
+function playBlob(blob, fallbackSeconds, onEnd) {
+  // Play a Blob via HTMLAudioElement. Falls back to timer if browser
+  // refuses (no user gesture / autoplay policy).
+  const url = URL.createObjectURL(blob);
+  const audio = new Audio(url);
+  audio.volume = 1.0;
+  audio.muted = false;
+  audio.preload = "auto";
+
+  const cleanup = () => {
+    try { URL.revokeObjectURL(url); } catch (e) { /* noop */ }
+    if (state.currentAudio === audio) state.currentAudio = null;
+  };
+
+  audio.onended = () => {
+    clearTimeout(state.speechTimer);
+    cleanup();
+    if (typeof onEnd === "function") onEnd();
+  };
+  audio.onerror = (e) => {
+    clearTimeout(state.speechTimer);
+    console.error("audio error:", e);
+    cleanup();
+    if (typeof onEnd === "function") onEnd();
+  };
+
+  state.currentAudio = audio;
+  const p = audio.play();
+  if (p && typeof p.then === "function") {
+    p.catch((err) => {
+      clearTimeout(state.speechTimer);
+      console.error("audio.play() rejected:", err);
+      // Autoplay policy: usuario precisa clicar em "Ativar audio".
+      const hint = document.getElementById("voice-hint");
+      if (hint) {
+        hint.textContent =
+          "⚠ Clique em 'Ativar audio' (acima do microfone) para liberar o som do navegador.";
+      }
+      cleanup();
+      if (typeof onEnd === "function") onEnd();
+    });
+  }
+
+  // Safety timer: if onended never fires (corrupted WAV), still finish.
+  clearTimeout(state.speechTimer);
+  state.speechTimer = setTimeout(() => {
+    if (state.currentAudio === audio) {
+      try { audio.pause(); } catch (e) { /* noop */ }
+    }
+    cleanup();
+    if (typeof onEnd === "function") onEnd();
+  }, (fallbackSeconds + 3) * 1000);
+}
+
 async function speak() {
   const text = document.getElementById("tts-input").value.trim();
   if (!text) return;
-  setState("speaking");
-  const btn = (typeof event !== "undefined" && event && event.target) || null;
-  const data = await postJson("/api/speak", { text }, btn);
-  // Server returns the actual WAV duration in seconds — use it.
-  const duration = data && data.duration_seconds ? data.duration_seconds : 0;
-  const fallback = Math.min(Math.max(text.split(/\s+/).length / 2.5 + 1, 1.5), 30);
-  const seconds = duration > 0 ? duration : fallback;
-  clearTimeout(state.speechTimer);
-  state.speechTimer = setTimeout(() => setState("idle"), seconds * 1000);
   document.getElementById("tts-input").value = "";
+  await speakArbitrary(text);
+}
+
+// =====================================================================
+// TTS via speechSynthesis (API nativa do Chrome/Edge)
+// Vantagens vs SAPI5 do Windows:
+//   - Vozes PT-BR naturais (Microsoft Maria, Google pt-BR)
+//   - Sem gerar WAV temporario
+//   - Sem /api/speak round-trip (instantaneo)
+//   - Funciona offline (vozes Microsoft sao locais)
+// =====================================================================
+
+const TTS = {
+  voice: null,          // voice PT-BR selecionada
+  voicesLoaded: false,
+  currentUtterance: null,
+};
+
+function ttsSelectVoice() {
+  if (!window.speechSynthesis) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices.length) return null;
+
+  // Prioridade: Google pt-BR > Microsoft Maria > Microsoft Daniel > qualquer pt-BR > qualquer pt
+  TTS.voice =
+    voices.find(v => v.lang === "pt-BR" && /google/i.test(v.name)) ||
+    voices.find(v => v.lang === "pt-BR" && /maria/i.test(v.name)) ||
+    voices.find(v => v.lang === "pt-BR" && /female/i.test(v.name)) ||
+    voices.find(v => v.lang === "pt-BR") ||
+    voices.find(v => v.lang.startsWith("pt")) ||
+    voices[0];
+  return TTS.voice;
+}
+
+// Carrega voices (Chrome carrega async, precisamos esperar)
+if (window.speechSynthesis) {
+  ttsSelectVoice();
+  window.speechSynthesis.onvoiceschanged = () => {
+    ttsSelectVoice();
+    TTS.voicesLoaded = true;
+    if (window.JARVIS_DEBUG) console.log("[tts] voices loaded:", window.speechSynthesis.getVoices().length);
+  };
+  // Forca carregar inicial tambem (alguns browsers disparam onvoiceschanged ja populado)
+  setTimeout(() => { ttsSelectVoice(); TTS.voicesLoaded = true; }, 100);
+}
+
+function ttsStop() {
+  if (!window.speechSynthesis) return;
+  try { window.speechSynthesis.cancel(); } catch (e) {}
+  TTS.currentUtterance = null;
+}
+
+function ttsIsAvailable() {
+  return !!(window.speechSynthesis && ttsSelectVoice());
+}
+
+async function ttsSpeak(text) {
+  if (!text) return { ok: false, reason: "empty" };
+
+  // Fallback pra SAPI5 do Windows se o browser nao tiver TTS nativo
+  if (!ttsIsAvailable()) {
+    return await ttsSpeakViaBackend(text);
+  }
+
+  return new Promise((resolve) => {
+    // Cancela qualquer fala em curso
+    ttsStop();
+
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "pt-BR";
+    if (TTS.voice) u.voice = TTS.voice;
+    u.rate = 1.0;
+    u.pitch = 1.0;
+    u.volume = 1.0;
+
+    u.onend = () => {
+      TTS.currentUtterance = null;
+      resolve({ ok: true, engine: "browser", duration: 0 });
+    };
+    u.onerror = (e) => {
+      TTS.currentUtterance = null;
+      // "interrupted" ou "canceled" nao sao erros reais
+      if (e.error === "interrupted" || e.error === "canceled") {
+        resolve({ ok: false, reason: e.error });
+      } else {
+        // Erro real: tenta fallback SAPI5
+        ttsSpeakViaBackend(text).then(resolve);
+      }
+    };
+
+    TTS.currentUtterance = u;
+    window.speechSynthesis.speak(u);
+  });
+}
+
+// Fallback: SAPI5 do Windows via /api/speak (WAV binario)
+async function ttsSpeakViaBackend(text) {
+  try {
+    const r = await fetch("/api/speak", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!r.ok) return { ok: false, reason: "backend_fail" };
+    const blob = await r.blob();
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => { URL.revokeObjectURL(url); resolve({ ok: true, engine: "sapi5" }); };
+      audio.onerror = () => { URL.revokeObjectURL(url); resolve({ ok: false, reason: "audio_play_fail" }); };
+      audio.play().catch(() => resolve({ ok: false, reason: "play_blocked" }));
+    });
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  }
+}
+
+async function speakArbitrary(text) {
+  if (!text) return;
+  setState("speaking");
+
+  const result = await ttsSpeak(text);
+
+  if (window.JARVIS_DEBUG) console.log("[tts] result:", result);
+
+  setState("idle");
+  if (state.continuousMode) startMic();
 }
 
 function interruptSpeech() {
-  // The Python TTS is hard to interrupt mid-stream from JS, so we just
-  // reset the visual state. The user can also use Stop on log/sound panel.
+  // Hard-stop current audio + reset visual state.
+  if (state.currentAudio) {
+    try { state.currentAudio.pause(); } catch (e) { /* noop */ }
+    state.currentAudio = null;
+  }
   clearTimeout(state.speechTimer);
   setState("idle");
 }
@@ -332,47 +559,60 @@ async function ask() {
   await postJson("/api/ask", { text }, btn);
   document.getElementById("ask-input").value = "";
 
-  setTimeout(refreshChatAndSpeak, 5000);
+  // Snapshot: numero de mensagens e ultimo texto AI ANTES do brain responder.
+  // Quando o poll detectar nova AI line, dispara TTS. Sem isso, o JS lia
+  // messages[0] (a mais antiga) e perdia a resposta recem-chegada.
+  const before = await fetchChatSnapshot();
+  await waitForNewAiAndSpeak(before);
 }
 
-async function refreshChatAndSpeak() {
-  await refreshChat();
+async function fetchChatSnapshot() {
   try {
     const r = await fetch("/api/chat?limit=1");
     const data = await r.json();
-    if (data.messages && data.messages[0] && data.messages[0].ai) {
-      const lastAi = data.messages[0].ai;
-      // Strip "Fontes:\n..." footer from the spoken text — sources are
-      // useful on screen but awkward to read aloud.
-      const spoken = lastAi.split("\n\nFontes:\n")[0].trim();
+    const last = (data.messages && data.messages[data.messages.length - 1]) || null;
+    return {
+      count: (data.messages || []).length,
+      lastAi: last && last.ai ? last.ai : "",
+    };
+  } catch (e) {
+    return { count: 0, lastAi: "" };
+  }
+}
+
+async function waitForNewAiAndSpeak(before, maxMs = 30000, intervalMs = 700) {
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    await new Promise(r => setTimeout(r, intervalMs));
+    const now = await fetchChatSnapshot();
+    // Critério: nova AI line diferente da anterior.
+    if (now.lastAi && now.lastAi !== before.lastAi) {
+      await refreshChat();
+      const spoken = now.lastAi.split("\n\nFontes:\n")[0].trim();
+      if (!spoken) {
+        setState("idle");
+        return;
+      }
       state.lastAnswer = spoken;
       setState("speaking");
-      // Ask the backend to render the WAV and tell us its real duration.
       try {
-        const sr = await fetch("/api/speak", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: spoken }),
-        });
-        const sj = await sr.json();
-        const duration = sj && sj.duration_seconds ? sj.duration_seconds : 0;
+        const { blob, duration } = await fetchTtsBlob(spoken);
         const fallback = Math.min(Math.max(spoken.split(/\s+/).length / 2.5 + 1, 2), 40);
         const seconds = duration > 0 ? duration : fallback;
-        clearTimeout(state.speechTimer);
-        state.speechTimer = setTimeout(() => {
+        playBlob(blob, seconds, () => {
           setState("idle");
           if (state.continuousMode) startMic();
-        }, seconds * 1000);
-        return;
+        });
       } catch (e) {
         console.error("speak during chat:", e);
+        setState("idle");
       }
+      return;
     }
-    setState("idle");
-  } catch (err) {
-    console.error(err);
-    setState("idle");
   }
+  // Timeout: brain nao respondeu a tempo. Sai do estado thinking sem falar.
+  console.warn("waitForNewAiAndSpeak: timeout esperando nova AI line");
+  setState("idle");
 }
 
 // ───────── Weather ─────────
@@ -386,8 +626,9 @@ async function checkWeather() {
   await postJson("/api/weather", { city }, btn);
   setTimeout(async () => {
     const r = await fetch("/api/chat?limit=1").then(r => r.json());
-    if (r.messages && r.messages[0] && r.messages[0].ai) {
-      result.textContent = r.messages[0].ai;
+    const last = r.messages && r.messages[r.messages.length - 1];
+    if (last && last.ai) {
+      result.textContent = last.ai;
     }
   }, 4000);
 }
@@ -403,8 +644,9 @@ async function research() {
   await postJson("/api/ask", { text }, btn);
   setTimeout(async () => {
     const r = await fetch("/api/chat?limit=1").then(r => r.json());
-    if (r.messages && r.messages[0] && r.messages[0].ai) {
-      const full = r.messages[0].ai;
+    const last = r.messages && r.messages[r.messages.length - 1];
+    if (last && last.ai) {
+      const full = last.ai;
       const parts = full.split("\n\nFontes:\n");
       const answer = parts[0];
       let sourcesHtml = "";
@@ -778,4 +1020,41 @@ if (window.JARVIS_DEBUG) {
 // Build do orb (curvas + partículas)
 buildOrbCurves();
 buildOrbParticles();
-setInterval(refreshChat, 5000);
+
+// ───────── Boot greeting ─────────
+// Pede uma saudação contextual ao backend (/api/greeting) e:
+//   1. Mostra no campo de input como placeholder inicial
+//   2. Atualiza o status do orb (visual)
+//   3. Fala via TTS (se nao bloqueado por preferencia do usuario)
+async function bootGreeting() {
+  try {
+    const r = await fetch("/api/greeting");
+    if (!r.ok) return;
+    const g = await r.json();
+    if (!g.text) return;
+
+    // 1. placeholder inicial no input
+    const input = document.getElementById("ask-input");
+    if (input) input.placeholder = g.text;
+
+    // 2. atualiza status do orb por 8 segundos
+    const status = document.getElementById("orb-status");
+    if (status) {
+      const original = status.textContent;
+      status.textContent = g.text;
+      setTimeout(() => { status.textContent = original; }, 8000);
+    }
+
+    // 3. fala via TTS no boot SOMENTE se o usuario ja desbloqueou audio.
+    //    Sem gesture previo, Chrome bloqueia audio.play() e a gente
+    //    fica mudo. O usuario clica "Ativar audio" primeiro.
+    if (!window.JARVIS_MUTED && audioUnlocked) {
+      speakArbitrary(g.text).catch(e => {
+        if (window.JARVIS_DEBUG) console.warn("[greeting] speak falhou:", e);
+      });
+    }
+  } catch (e) {
+    if (window.JARVIS_DEBUG) console.warn("[greeting] falhou:", e);
+  }
+}
+bootGreeting();

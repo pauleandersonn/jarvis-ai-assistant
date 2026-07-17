@@ -175,6 +175,63 @@ def favicon() -> Response:
 
 
 # ---------- Status endpoint ----------
+@app.get("/api/greeting")
+def greeting() -> JSONResponse:
+    """Retorna uma saudacao contextual baseada na hora, data e localizacao.
+
+    O frontend chama isso uma vez no boot e usa o texto para o TTS,
+    mostrando tambem na UI. Cada hora tem variacoes para evitar repeticao.
+    """
+    from datetime import datetime
+    now = datetime.now()
+    hour = now.hour
+    weekday = now.strftime("%A")
+    city = (LOCATION_CACHE.get("city") or "").strip()
+
+    # Saudacao por periodo
+    if 5 <= hour < 12:
+        period = "Bom dia"
+        period_en = "manha"
+    elif 12 <= hour < 18:
+        period = "Boa tarde"
+        period_en = "tarde"
+    elif 18 <= hour < 23:
+        period = "Boa noite"
+        period_en = "noite"
+    else:
+        period = "Ola"
+        period_en = "madrugada"
+
+    # Dia da semana em PT-BR
+    weekdays = {
+        "Monday": "segunda-feira", "Tuesday": "terca-feira",
+        "Wednesday": "quarta-feira", "Thursday": "quinta-feira",
+        "Friday": "sexta-feira", "Saturday": "sabado", "Sunday": "domingo",
+    }
+    weekday_pt = weekdays.get(weekday, weekday)
+
+    # Variacoes da saudacao
+    import random
+    base_lines = [
+        f"{period}. JARVIS online. Hoje e {weekday_pt}.",
+        f"{period}, senhor. Sistema operacional. {weekday_pt}.",
+        f"{period}. {weekday_pt.capitalize()}. JARVIS a postos.",
+        f"{period}, " + (city + " - " if city else "") + "todos os sistemas ativos.",
+        f"{period}. Como posso ajudar nesta {period_en}?",
+    ]
+    line = random.choice(base_lines)
+    if city:
+        line += f" Localizacao detectada: {city}."
+
+    return JSONResponse({
+        "text": line,
+        "hour": hour,
+        "weekday": weekday_pt,
+        "city": city,
+        "period": period_en,
+    })
+
+
 @app.get("/api/status")
 def status() -> JSONResponse:
     """Return current state of every subsystem the dashboard knows about."""
@@ -550,39 +607,102 @@ def _append_log(line: str) -> None:
 
 
 @app.post("/api/speak")
-async def api_speak(payload: TextPayload) -> dict:
-    """Speak `text` through the local TTS.
+async def api_speak(payload: TextPayload):
+    """Pre-processa o texto para TTS e devolve os meta-dados.
 
-    Renders to a WAV via SAPI5, then opens the file with the OS default
-    player. Returns the duration (in seconds) so the frontend knows when
-    the speech actually ends.
+    O frontend (Chrome/Edge) usa a API nativa `speechSynthesis.speak()`
+    com vozes PT-BR (Microsoft Maria, Google pt-BR) - melhor qualidade
+    que SAPI5 do Windows, sem precisar gerar WAV nem spawnar processo.
+
+    SAPI5 fica como fallback (header X-Use-Sapi5: true ou sem vozes no browser).
+
+    Returns JSON {"text": str, "engine": "browser"|"sapi5", "duration": int}
     """
-    import asyncio
-    from TextToSpeech.Fast_DF_TTS import speak, wav_duration_seconds
+    from TextToSpeech.Fast_DF_TTS import _clean_for_speech, _has_meta_content, _smart_truncate
 
-    loop = asyncio.get_event_loop()
+    raw = payload.text or ""
+    clean = _clean_for_speech(raw)
+    if not clean:
+        return JSONResponse({"status": "empty", "text": ""}, status_code=400)
+
+    # Bloqueia meta-fala do LLM (substituido por mensagem amigavel)
+    if _has_meta_content(clean):
+        _append_log(f"WARN: meta-fala bloqueada: {clean[:80]!r}")
+        return JSONResponse({
+            "status": "skip_meta",
+            "text": "(mensagem bloqueada pelo filtro anti-meta-fala)",
+            "engine": "browser",
+        })
+
+    # Encurta respostas muito longas
+    text = _smart_truncate(clean, max_chars=600)
+    _append_log(f"OK: speak (browser TTS) -> {len(text)} chars")
+    return JSONResponse({
+        "status": "ok",
+        "text": text,
+        "engine": "browser",
+        "duration_seconds": max(1, len(text.split()) // 2),
+    })
+
+
+def _wav_dur(wav_bytes: bytes) -> float:
+    """Decode duration from a WAV blob's header (no temp file needed)."""
     try:
-        result = await loop.run_in_executor(None, speak, payload.text)
-        _append_log(f"OK: speak -> {str(result)[:200]}")
+        import struct
+        # 'RIFF' header
+        if wav_bytes[:4] != b"RIFF" or wav_bytes[8:12] != b"WAVE":
+            return 0.0
+        # Walk chunks to find 'fmt ' and 'data'.
+        pos = 12
+        sample_rate = 0
+        num_channels = 0
+        bits_per_sample = 0
+        data_size = 0
+        while pos + 8 <= len(wav_bytes):
+            chunk_id = wav_bytes[pos:pos + 4]
+            chunk_size = struct.unpack("<I", wav_bytes[pos + 4:pos + 8])[0]
+            if chunk_id == b"fmt ":
+                fmt = wav_bytes[pos + 8:pos + 8 + chunk_size]
+                if len(fmt) >= 16:
+                    num_channels = struct.unpack("<H", fmt[2:4])[0]
+                    sample_rate = struct.unpack("<I", fmt[4:8])[0]
+                    bits_per_sample = struct.unpack("<H", fmt[14:16])[0]
+            elif chunk_id == b"data":
+                data_size = chunk_size
+                break
+            pos += 8 + chunk_size + (chunk_size % 2)
+        if sample_rate <= 0 or num_channels <= 0 or bits_per_sample <= 0:
+            return 0.0
+        bytes_per_second = sample_rate * num_channels * bits_per_sample // 8
+        return float(data_size) / float(bytes_per_second) if bytes_per_second else 0.0
+    except Exception:
+        return 0.0
 
-        # Try to extract the duration of the WAV we just made so the
-        # UI can switch back to idle when playback actually ends.
-        duration = 0.0
-        try:
-            if "Played:" in result:
-                wav_path = str(result).split("Played:", 1)[1].strip()
-                duration = wav_duration_seconds(wav_path)
-        except Exception:
-            pass
 
-        return {
-            "status": "ok",
-            "result": result,
-            "duration_seconds": duration,
-        }
-    except Exception as exc:  # noqa: BLE001
-        _append_log(f"FAIL: speak -> {exc}")
-        return {"status": "error", "error": str(exc)}
+@app.get("/api/audio/{filename}")
+def api_audio(filename: str) -> Response:
+    """Serve a generated WAV file for browser playback.
+
+    Only files inside TextToSpeech/tmp_audio/ are served (path traversal
+    blocked). Returns 404 if missing.
+    """
+    from TextToSpeech.Fast_DF_TTS import TMP_DIR
+    safe = (filename or "").lstrip("/")
+    if ".." in safe or "/" in safe or "\\" in safe:
+        return Response(content="forbidden", status_code=403)
+    full = (TMP_DIR / safe).resolve()
+    if not str(full).startswith(str(TMP_DIR.resolve())):
+        return Response(content="forbidden", status_code=403)
+    if not full.exists() or not full.is_file():
+        return Response(content="not found", status_code=404)
+    return Response(
+        content=full.read_bytes(),
+        media_type="audio/wav",
+        headers={
+            "Cache-Control": "no-store",
+            "Accept-Ranges": "bytes",
+        },
+    )
 
 
 @app.post("/api/ask")

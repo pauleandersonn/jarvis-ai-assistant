@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>JARVIS - Teste de Voz</title>
+<style>
+body { font-family: system-ui; background: #0a0a0a; color: #fff; padding: 30px; max-width: 700px; margin: 0 auto; }
+h1 { color: #5B6CFF; }
+button { background: #5B6CFF; color: white; border: none; padding: 15px 25px; border-radius: 8px; font-size: 16px; margin: 8px; cursor: pointer; }
+button:hover { background: #4A5BFF; }
+button:disabled { background: #555; cursor: not-allowed; }
+#status { padding: 12px; border-radius: 6px; margin: 12px 0; background: #111; border: 1px solid #333; }
+.success { color: #10B981; }
+.error { color: #EF4444; }
+#transcript { background: #111; padding: 16px; border-radius: 6px; min-height: 80px; font-size: 18px; border: 1px solid #333; }
+</style>
+</head>
+<body>
+<h1>🎤 JARVIS - Teste de Voz</h1>
+
+<div id="status"><strong>Status:</strong> <span id="status-text">aguardando</span></div>
+
+<h2>1. Teste de Web Speech API (entrada - mic)</h2>
+<button id="btn-mic">🎤 Falar agora</button>
+<button id="btn-mic-stop" disabled>⏹ Parar</button>
+<div id="transcript" style="margin-top:12px;">(o que você falar aparece aqui)</div>
+
+<h2>2. Teste de TTS (saída - voz)</h2>
+<button id="btn-speak-hello">🔊 Falar "Olá, eu sou o JARVIS"</button>
+<button id="btn-speak-loc">🔊 Falar a frase "Não tenho acesso à sua localização"</button>
+
+<h2>3. Diagnóstico completo</h2>
+<pre id="diag" style="background:#111; padding:16px; border-radius:6px; overflow-x:auto;"></pre>
+
+<script>
+const statusEl = document.getElementById('status-text');
+const transcriptEl = document.getElementById('transcript');
+const diagEl = document.getElementById('diag');
+
+function setStatus(text, cls) {
+  statusEl.textContent = text;
+  statusEl.className = cls || '';
+}
+
+function updateDiag() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const synth = window.speechSynthesis;
+  diagEl.textContent = JSON.stringify({
+    navegador: navigator.userAgent.match(/(Chrome|Edge|Firefox|Safari)/)?.[0] || '?',
+    speechRecognition_disponivel: !!SR,
+    speechSynthesis_disponivel: !!synth,
+    languages: synth ? synth.getVoices().map(v => `${v.name} (${v.lang})`).slice(0, 10) : [],
+    voices_pt_br: synth ? synth.getVoices().filter(v => v.lang.startsWith('pt')).map(v => v.name) : [],
+    online: navigator.onLine,
+    cookies: navigator.cookieEnabled,
+    mic_permission: '?'  // will be updated by getUserMedia
+  }, null, 2);
+}
+updateDiag();
+setInterval(updateDiag, 3000);
+
+// ---- 1. MIC TEST ----
+const btnMic = document.getElementById('btn-mic');
+const btnMicStop = document.getElementById('btn-mic-stop');
+let recognition = null;
+let userWantsMic = false;
+
+btnMic.onclick = () => {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    setStatus('❌ Web Speech API não suportada neste navegador. Use Chrome ou Edge.', 'error');
+    return;
+  }
+
+  if (userWantsMic) {
+    userWantsMic = false;
+    try { recognition && recognition.stop(); } catch (e) {}
+    btnMicStop.disabled = true;
+    btnMic.textContent = '🎤 Falar agora';
+    setStatus('Parado pelo usuário');
+    return;
+  }
+
+  recognition = new SR();
+  recognition.lang = 'pt-BR';
+  recognition.continuous = true;
+  recognition.interimResults = true;
+
+  recognition.onstart = () => {
+    setStatus('🎙️ Ouvindo... fale agora', 'success');
+    btnMic.textContent = '🎤 Ouvindo... (clique para parar)';
+    btnMicStop.disabled = false;
+    userWantsMic = true;
+  };
+
+  recognition.onresult = (event) => {
+    let interim = '', final = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const t = event.results[i][0].transcript;
+      if (event.results[i].isFinal) final += t;
+      else interim += t;
+    }
+    transcriptEl.textContent = (final || interim).trim() || '(vazio)';
+  };
+
+  recognition.onerror = (e) => {
+    setStatus(`❌ Erro no mic: ${e.error}`, 'error');
+    btnMic.textContent = '🎤 Falar agora';
+    btnMicStop.disabled = true;
+    userWantsMic = false;
+    updateDiag();
+  };
+
+  recognition.onend = () => {
+    if (userWantsMic) {
+      // auto-restart se o user quer mic
+      setStatus('⏸️ Pausa detectada. Reiniciando mic em 600ms...');
+      setTimeout(() => {
+        if (userWantsMic) {
+          try { recognition.start(); } catch (e) { console.warn(e); }
+        }
+      }, 600);
+    } else {
+      setStatus('Mic parado');
+      btnMic.textContent = '🎤 Falar agora';
+      btnMicStop.disabled = true;
+    }
+  };
+
+  try {
+    recognition.start();
+  } catch (e) {
+    setStatus(`❌ Falha ao iniciar: ${e.message}`, 'error');
+    console.error(e);
+  }
+};
+
+btnMicStop.onclick = () => {
+  userWantsMic = false;
+  try { recognition && recognition.stop(); } catch (e) {}
+  setStatus('Parado pelo usuário');
+  btnMic.textContent = '🎤 Falar agora';
+  btnMicStop.disabled = true;
+};
+
+// ---- 2. TTS TEST ----
+document.getElementById('btn-speak-hello').onclick = () => {
+  if (!window.speechSynthesis) {
+    setStatus('❌ speechSynthesis não disponível', 'error');
+    return;
+  }
+  const u = new SpeechSynthesisUtterance('Olá, eu sou o JARVIS. Teste de voz funcionando.');
+  u.lang = 'pt-BR';
+  u.rate = 1.0;
+  u.pitch = 1.0;
+  u.volume = 1.0;
+
+  // pegar voz pt-BR
+  const voices = window.speechSynthesis.getVoices();
+  const ptVoice = voices.find(v => v.lang.startsWith('pt-BR')) || voices.find(v => v.lang.startsWith('pt'));
+  if (ptVoice) u.voice = ptVoice;
+
+  window.speechSynthesis.cancel();  // para qualquer fala em curso
+  window.speechSynthesis.speak(u);
+  setStatus('🔊 Falando (TTS nativo do navegador, não SAPI5 do Windows)');
+};
+
+document.getElementById('btn-speak-loc').onclick = () => {
+  if (!window.speechSynthesis) {
+    setStatus('❌ speechSynthesis não disponível', 'error');
+    return;
+  }
+  const u = new SpeechSynthesisUtterance('Eu não tenho acesso à sua localização, então não posso fornecer a previsão do tempo.');
+  u.lang = 'pt-BR';
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(u);
+  setStatus('🔊 Falando (TTS nativo do navegador)');
+};
+
+// ---- 3. Permission check ----
+if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+  navigator.mediaDevices.getUserMedia({ audio: true })
+    .then(stream => {
+      const tracks = stream.getAudioTracks();
+      diagEl.textContent = diagEl.textContent.replace('"mic_permission": "?"',
+        `"mic_permission": "✅ granted", "mic_label": "${tracks[0]?.label}"`);
+      stream.getTracks().forEach(t => t.stop());
+    })
+    .catch(err => {
+      diagEl.textContent = diagEl.textContent.replace('"mic_permission": "?"',
+        `"mic_permission": "❌ denied (${err.name})"`);
+    });
+}
+</script>
+</body>
+</html>

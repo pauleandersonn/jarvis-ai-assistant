@@ -154,7 +154,13 @@
       </div>
 
       <input type="text" id="ask-input" class="voice-input"
-             placeholder="Fale com o JARVIS ou digite aqui…" />
+             placeholder="Digite aqui para falar com o JARVIS…" />
+
+      <button class="primary-btn enable-audio-btn" id="enable-audio-btn"
+              onclick="enableAudio()" title="Ativar audio (1a vez desbloqueia o som do navegador)">
+        <span class="material-icons">volume_up</span>
+        <span id="enable-audio-label">Ativar audio</span>
+      </button>
 
       <button class="mic-btn" id="mic-btn" onclick="toggleMic()" title="Falar">
         <span class="mic-icon" id="mic-icon">⌬</span>
@@ -166,7 +172,8 @@
     </div>
 
     <div class="voice-hint" id="voice-hint">
-      Fale e o JARVIS responde sozinho — sem precisar clicar.
+      Digite uma mensagem e pressione Enter — JARVIS responde com voz.
+      Clique em "Ativar audio" na primeira vez para liberar o som do navegador.
     </div>
   </section>
 
