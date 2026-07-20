@@ -1459,11 +1459,11 @@ def briefing_arrival() -> JSONResponse:
         },
         {
             "id": "trade-telegram-fix",
-            "titulo": "Telegram do bot trade (HTTP 401)",
-            "prioridade": "alta",
-            "tempo_estimado": "5 min",
-            "acao": "@BotFather → /mybots → @luaptrade_bot → /revoke → colar no .env.",
-            "bloqueador": "Precisa do celular em mãos.",
+            "titulo": "✅ Telegram do bot trade (HTTP 401)",
+            "prioridade": "concluido",
+            "tempo_estimado": "0",
+            "acao": "Resolvido 20/07 18h via @BotFather. Bot @luaptrade_bot LIVE, mensagem msg_id 560 enviada com sucesso.",
+            "bloqueador": "nenhum",
         },
         {
             "id": "whatsapp-jarvis-mvp",
@@ -1484,9 +1484,10 @@ def briefing_arrival() -> JSONResponse:
     ]
 
     # 5) Recomendação do que fazer AGORA
-    # Lógica: se tiver token Telegram pendente, essa é a primeira coisa
-    # (bloqueia deploy Fly). Senão, deploy Fly. Senão, MVP WhatsApp.
-    proxima_acao = pendencias[1]  # Telegram (sempre primeiro — desbloqueia tudo)
+    # Lógica: se bot Finanças ainda não tá no Fly, essa é a próxima (desbloqueia
+    # uso real). Senão, priorizar MVP WhatsApp. Telegram já tá OK (20/07 18h).
+    pendencias = [p for p in pendencias if p["id"] != "trade-telegram-fix"]
+    proxima_acao = pendencias[0]  # Bot Finanças Fly (próxima desbloqueada)
     proxima_acao_destaque = proxima_acao["acao"]
 
     # 6) Monta texto corrido pro TTS (sem repetir a info de sinais)
@@ -1501,11 +1502,8 @@ def briefing_arrival() -> JSONResponse:
         f"São {hora}h{agora.minute:02d} da {periodo} em Manaus. "
         f"{proximo_evento_txt} "
         f"{linha_trade} "
-        f"Tem três coisas paradas pra retomar. "
-        f"A mais urgente é o token do Telegram: você precisa abrir o BotFather "
-        f"no celular e regenerar o token do @luaptrade_bot. "
-        f"Depois disso, consegue fazer deploy do bot de Finanças no Fly em "
-        f"uns quinze minutos. "
+        f"O Telegram do bot de trade já tá funcionando  token regenerado agora há pouco. "
+        f"Próxima frente: fazer deploy do bot de Finanças no Fly.io, uns quinze minutos. "
         f"Tem o roteiro completo no Obsidian, na nota PC Runbook 2026-07-20. "
         f"Bom descanso. Se quiser, é só pedir e eu guio passo a passo."
     )
