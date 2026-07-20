@@ -210,3 +210,41 @@ via CLI sem precisar setar env no shell.
 2. Criar cron que envia `/api/integrations/telegram/opportunities/brief` pro `@luap_pc_bot` às 18h
 3. Quando bot Finanças estiver no Fly, ligar as 2 pontas via webhook
 4. Configurar Meta Cloud API (whatsapp) com chip Vivo + Meta Business Manager (~3-7 dias)
+
+---
+
+## Frente 5: Template M5 no day-trade-bot (Telegram notifier) ⏸️ PENDENTE
+
+**Onde:** `C:\Users\paule\Documents\PROGRAMAÇÃO\day-trade-bot\src\daytrade_bot\notify\telegram.py`
+
+**O que fazer:**
+
+1. Criar `src/daytrade_bot/notify/signal_formatter.py` com função:
+   ```python
+   def format_signal_pauleanderson(symbol, time_str, direction, expiry="5min", gale=True):
+       direcao_label = "COMPRA" if direction == "CALL" else "VENDA"
+       symbol_clean = symbol.replace("-OTC", "").replace("/", "")
+       symbol_with_slash = f"{symbol_clean[:3]}/{symbol_clean[3:6]}"
+       sinal = "⬆️" if direction == "CALL" else "⬇️"
+       gale_line = " ⚠️ Em caso de LOSS:\n \n ⏱ Martin Gale 1 - 5 Minutos Depois" if gale else " ⚠️ Em caso de LOSS:"
+       return (
+           f"🚨 ATENÇÃO  🚨\n"
+           f"🕛 Expiração: {expiry} ⏳\n"
+           f" ➖➖➖➖➖➖➖➖➖➖\n"
+           f"💰👇🏼 OPERAÇÃO (Hora, Moeda, Sinal)\n\n"
+           f"{symbol_with_slash} {time_str}, {direcao_label} {sinal}\n"
+           f" ➖➖➖➖➖➖➖➖➖➖\n"
+           f"{gale_line}"
+       )
+   ```
+
+2. Plugar em `TelegramNotifier.send_signal()` no `telegram.py` (substituir mensagem atual)
+
+3. Plugar em `WebhookNotifier.notify_signal()` no `webhook.py` (payload JSON + `formatted_message` pra JARVIS mostrar no toast)
+
+4. Smoke test:
+   ```bash
+   python -m daytrade_bot.engine.main --notify telegram --candles 50
+   ```
+
+**Já tem no JARVIS (formato M5):** `Brain/integrations/whatsapp.py:send_signal_message()` — funciona pra WhatsApp Meta Cloud API.
