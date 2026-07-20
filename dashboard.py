@@ -136,6 +136,24 @@ _ws_lock = threading.Lock()
 # ---------- FastAPI app ----------
 app = FastAPI(title="Jarvis Dashboard", version="1.0.0")
 
+# CORS middleware (permite que frontends de outras origens consumam a API).
+# Em prod (JARVIS_CORS_ORIGINS=https://app.exemplo.com), restringe; em dev/default,
+# libera tudo. Configurável via env var JARVIS_CORS_ORIGINS (comma-separated).
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+_cors_origins = os.environ.get("JARVIS_CORS_ORIGINS", "*").strip()
+if _cors_origins == "*":
+    _origins_list = ["*"]
+else:
+    _origins_list = [o.strip() for o in _cors_origins.split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins_list,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
+
 
 # Serve the static frontend from ./dashboard_static
 STATIC_DIR = PROJECT_DIR / "dashboard_static"
@@ -221,6 +239,30 @@ def favicon() -> Response:
         '</svg>'
     )
     return Response(content=svg, media_type="image/svg+xml")
+
+
+# ---------- Health endpoint (liveness/readiness probe) ----------
+@app.get("/api/health")
+def health() -> JSONResponse:
+    """Liveness probe simples. Retorna 200 com uptime + checks básicos.
+
+    Sempre retorna 200 se o processo estiver vivo (não consulta subsistemas
+    pesados pra não adicionar latência num healthcheck que deve ser instantâneo).
+    Use /api/status pra diagnóstico completo (mic, volume, calendar, etc).
+    """
+    return JSONResponse({
+        "ok": True,
+        "service": "jarvis-dashboard",
+        "version": app.version,
+        "uptime_seconds": int(time.time() - STARTED_AT),
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "pid": os.getpid(),
+        "checks": {
+            "trade_buffer": len(TRADE_SIGNAL_BUFFER),
+            "trade_buffer_cap": TRADE_SIGNAL_BUFFER_MAX,
+            "ws_clients": len(_ws_clients),
+        }
+    })
 
 
 # ---------- Status endpoint ----------
@@ -691,21 +733,25 @@ async def api_trade_webhook(payload: TradeWebhookPayload, request: Request) -> J
             status_code=401,
         )
 
-    # Rate-limit simples por IP (defesa contra flood externo).
-    # Max 30 requests / 60s por IP. Bots scanners vao bater nesse limite
+    # Rate-limit por IP (defesa contra flood). Configurável via env var
+    # JARVIS_TRADE_WEBHOOK_RATE (default 120 req / 60s). 120 cabe várias
+    # estratégias em paralelo (RSI + Bollinger + MACD em 5 ativos = 25 reqs
+    # por minuto) sem bater 429. Bots scanners vao bater nesse limite
     # e receber 429 sem conseguir derrubar o dashboard.
     import time as _t
+    RATE_MAX = int(os.environ.get("JARVIS_TRADE_WEBHOOK_RATE", "120"))
+    RATE_WINDOW = 60  # segundos
     client_ip = request.client.host if request.client else "unknown"
     now = _t.time()
     if not hasattr(api_trade_webhook, "_rl"):
         api_trade_webhook._rl = {}
     rl = api_trade_webhook._rl
     bucket = rl.setdefault(client_ip, [])
-    bucket[:] = [ts for ts in bucket if now - ts < 60]
-    if len(bucket) >= 30:
-        LOG.warning("trade webhook rate-limit hit from %s", client_ip)
+    bucket[:] = [ts for ts in bucket if now - ts < RATE_WINDOW]
+    if len(bucket) >= RATE_MAX:
+        LOG.warning("trade webhook rate-limit hit from %s (limit %d/%ds)", client_ip, RATE_MAX, RATE_WINDOW)
         return JSONResponse(
-            {"ok": False, "error": "rate limit exceeded"},
+            {"ok": False, "error": "rate limit exceeded", "limit": RATE_MAX, "window_seconds": RATE_WINDOW},
             status_code=429,
         )
     bucket.append(now)
@@ -2208,13 +2254,189 @@ def briefing_arrival_audio() -> Response:
 
 
 # ---------- Entrypoint ----------
+# ---------- Visual Radar Dashboard (single-page, polled) ----------
+# Endpoint agregado: junta trade + telegram oportunidades + church radar
+# num único JSON pro painel visual em /radar
+@app.get("/api/radar/dashboard")
+def radar_dashboard_data(
+    trade_minutes: int = 30,
+    opp_limit: int = 10,
+    church_limit: int = 10,
+) -> JSONResponse:
+    """Snapshot consolidado dos 3 radares ativos pra painel visual."""
+    from datetime import datetime, timezone, timedelta
+    from Brain.integrations.telegram_opportunities_store import (
+        get_stats as get_tel_opp_stats,
+        list_opportunities,
+    )
+    from Brain.integrations.church_radar_store import (
+        get_stats as get_church_stats,
+        list_radar_items,
+    )
+
+    now = datetime.now(timezone.utc)
+
+    # 1. Trade signals recentes (do buffer ativo)
+    try:
+        # TRADE_SIGNAL_BUFFER tá em dashboard.py (lista global)
+        cutoff = now - timedelta(minutes=trade_minutes)
+        recent_signals = [
+            {
+                "id": s.get("id"),
+                "symbol": s.get("symbol"),
+                "direction": s.get("action") or s.get("direction"),
+                "time": s.get("timestamp"),
+                "score": s.get("confidence"),
+                "result": s.get("result"),
+            }
+            for s in TRADE_SIGNAL_BUFFER
+            if s.get("timestamp") and _parse_iso(s.get("timestamp")) >= cutoff
+        ]
+        # Calcula stats do dia inteiro
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        all_signals = [
+            s for s in TRADE_SIGNAL_BUFFER
+            if s.get("timestamp") and _parse_iso(s.get("timestamp")) >= today_start
+        ]
+        wins = sum(1 for s in all_signals if s.get("result") == "win")
+        losses = sum(1 for s in all_signals if s.get("result") == "loss")
+        pnl = sum(s.get("payout", 0) or 0 for s in all_signals if s.get("result") == "win")
+        pnl_loss = sum(s.get("payout", 0) or 0 for s in all_signals if s.get("result") == "loss")
+    except Exception as e:
+        LOG.warning(f"trade radar fetch falhou: {e}")
+        recent_signals = []
+        wins = losses = 0
+        pnl = pnl_loss = 0.0
+        all_signals = []
+
+
+    # 2. Telegram opportunities
+    try:
+        tel_stats_raw = get_tel_opp_stats()
+        # Normaliza nomes pros KPIs JS
+        tel_stats = {
+            "total_opportunities": tel_stats_raw.get("total", 0),
+            "hot_leads": tel_stats_raw.get("hot_leads_pendentes", 0),
+            "convertidos": tel_stats_raw.get("convertidos", 0),
+            "score_medio": tel_stats_raw.get("score_medio", 0),
+            "by_category": tel_stats_raw.get("by_category", {}),
+        }
+        hot_tel = [
+            {
+                "id": o["id"],
+                "category": o.get("category"),
+                "score": o.get("score"),
+                "text": (o.get("message_text") or "")[:80],
+                "chat": o.get("chat_title"),
+                "sender": o.get("sender_name"),
+                "detected_at": o.get("created_at"),
+                "is_hot_lead": bool(o.get("lead_quente")) and o.get("status") == "novo",
+            }
+            for o in list_opportunities(only_hot=True, limit=opp_limit)
+        ]
+    except Exception as e:
+        LOG.warning(f"telegram opp fetch falhou: {e}")
+        tel_stats = {"total_opportunities": 0, "hot_leads": 0, "convertidos": 0, "score_medio": 0}
+        hot_tel = []
+
+
+    # 3. Church radar (ministerial)
+    try:
+        church_stats = get_church_stats()
+        church_items = list_radar_items(urgency="alta", limit=church_limit)
+        church_high = [
+            {
+                "id": i["id"],
+                "urgency": i.get("urgency"),
+                "action": i.get("suggested_action"),
+                "author": i.get("author_name"),
+                "text": (i.get("raw_text") or "")[:80],
+                "opportunities": i.get("opportunities", []),
+                "detected_at": i.get("detected_at"),
+            }
+            for i in church_items
+        ]
+        church_all_new = list_radar_items(status="novo", limit=5)
+        church_others = [
+            {
+                "id": i["id"],
+                "urgency": i.get("urgency"),
+                "action": i.get("suggested_action"),
+                "author": i.get("author_name"),
+                "text": (i.get("raw_text") or "")[:60],
+                "opportunities": i.get("opportunities", []),
+                "detected_at": i.get("detected_at"),
+            }
+            for i in church_all_new if i.get("urgency") != "alta"
+        ][:church_limit]
+    except Exception as e:
+        LOG.warning(f"church radar fetch falhou: {e}")
+        church_stats = {}
+        church_high = []
+        church_others = []
+
+    return JSONResponse({
+        "generated_at": now.isoformat(),
+        "trade": {
+            "signals_recent": recent_signals[-5:],
+            "today": {
+                "total": len(all_signals) if 'all_signals' in locals() else 0,
+                "wins": wins,
+                "losses": losses,
+                "pnl_brl": round((pnl or 0) + (pnl_loss or 0), 2),
+                "win_rate": round(wins / max(wins + losses, 1) * 100, 1),
+            },
+            "live": True,
+        },
+        "telegram_opportunities": {
+            "stats": tel_stats,
+            "hot": hot_tel,
+            "live": True,
+        },
+        "church_radar": {
+            "stats": church_stats,
+            "high_urgency": church_high,
+            "new_others": church_others,
+            "live": True,
+        },
+    })
+
+
+def _parse_iso(s: str):
+    """Parse ISO timestamp tolerante (UTC)."""
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        return datetime.now(timezone.utc) - timedelta(days=365)
+
+
+@app.get("/radar", response_class=HTMLResponse)
+def radar_visual_panel() -> str:
+    """Painel visual estilo newsroom — 3 radares, polling 5s."""
+    html_path = STATIC_DIR / "radar.html"
+    if not html_path.exists():
+        return "<h1>radar.html missing</h1>"
+    return html_path.read_text(encoding="utf-8")
+
+
 if __name__ == "__main__":
     import uvicorn
     # Allow overriding the port via env var, useful when 8765 is taken
     # by an orphaned process we can't kill.
     port = int(os.environ.get("JARVIS_DASHBOARD_PORT", "8765"))
+    # Number of worker processes. Default 1 (modo dev/debug, sem problemas
+    # com SQLite locks e reload). Em prod, subir pra 4-8 pra ~400-800 req/s.
+    # Atenção: SQLite NÃO compartilha entre workers — cada worker tem seu
+    # buffer em memória. Workers múltiplos só fazem sentido se o estado
+    # crítico tiver em DB (ou se você aceitar inconsistência leve entre
+    # workers pra velocidade). Em Windows, workers > 1 exige --reload OFF.
+    workers = int(os.environ.get("JARVIS_DASHBOARD_WORKERS", "1"))
     print("\n" + "=" * 60)
     print("  Jarvis Dashboard")
     print(f"  Open: http://localhost:{port}")
+    print(f"  Workers: {workers} (set JARVIS_DASHBOARD_WORKERS=N to scale)")
     print("=" * 60 + "\n")
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run(
+        app, host="127.0.0.1", port=port,
+        log_level="warning", workers=workers,
+    )
