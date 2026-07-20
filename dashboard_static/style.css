@@ -1400,6 +1400,61 @@ body.state-listening .mic-btn {
   font-size: 14px;
 }
 
+/* ───────── Email list (aba Email) ───────── */
+.email-count {
+  font-size: 11px;
+  color: var(--text-muted, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 10px;
+}
+
+.email-item {
+  border-left: 2px solid transparent;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: rgba(148, 163, 184, 0.04);
+  border-radius: 6px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.email-item:hover {
+  background: rgba(148, 163, 184, 0.08);
+  border-left-color: #22D3EE;
+}
+
+.email-from {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text, #e2e8f0);
+  margin-bottom: 2px;
+}
+
+.email-subject {
+  font-size: 14px;
+  font-weight: 500;
+  color: #5B6CFF;
+  margin-bottom: 4px;
+}
+
+.email-date {
+  font-size: 11px;
+  color: var(--text-muted, #94a3b8);
+  margin-bottom: 6px;
+}
+
+.email-snippet {
+  font-size: 12px;
+  color: var(--text-muted, #cbd5e1);
+  line-height: 1.5;
+}
+
+.email-unread {
+  color: #22D3EE;
+  font-size: 10px;
+  margin-left: 6px;
+}
+
 /* ───────── Chat list ───────── */
 .chat-list {
   display: flex;

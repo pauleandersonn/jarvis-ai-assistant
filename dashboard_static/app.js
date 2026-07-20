@@ -1157,7 +1157,26 @@ async function searchEmails() {
       out.textContent = "Erro: " + (j.error || j.message || "desconhecido");
       return;
     }
-    out.textContent = j.results || j.summary || j.text || JSON.stringify(j, null, 2);
+    // /api/email/search devolve {emails: [{from, subject, date, snippet, labels}, ...]}
+    const emails = j.emails || j.results || [];
+    if (!emails.length) {
+      out.textContent = "Nenhum email encontrado pra \"" + query + "\".";
+      return;
+    }
+    const html = emails.map(e => {
+      const subj = escapeHtml(e.subject || "(sem assunto)");
+      const from = escapeHtml(e.from || "?");
+      const date = escapeHtml(e.date || "");
+      const snip = escapeHtml(e.snippet || "").slice(0, 220);
+      const unread = (e.labels || []).includes("UNREAD") ? " <span class=\"email-unread\">●</span>" : "";
+      return `<div class="email-item">
+        <div class="email-from">${from}${unread}</div>
+        <div class="email-subject">${subj}</div>
+        <div class="email-date">${date}</div>
+        <div class="email-snippet">${snip}</div>
+      </div>`;
+    }).join("");
+    out.innerHTML = `<div class="email-count">${j.count || emails.length} resultado(s) pra "${escapeHtml(query)}"</div>${html}`;
   } catch (err) {
     out.textContent = "Falha: " + err.message;
   }
