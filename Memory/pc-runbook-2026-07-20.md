@@ -86,16 +86,12 @@ no incidente 17/07 — HTTP 401 Unauthorized).
    - Roda: `.\.venv\Scripts\python.exe -m daytrade_bot.engine.main --broker paper --candles 1000 --notify webhook`
    - Ver no JARVIS: drawer → aba Trade → 12+ cards aparecem
 
-2. **Telegram (QUEBRADO — precisa BotFather)**
-   - Token atual (`8721608546:...kXiE`) retorna **HTTP 401** = revogado
-   - Pra reativar:
-     1. Abre `@BotFather` no Telegram (celular)
-     2. `/mybots` → escolhe `@luaptrade_bot`
-     3. `/revoke` → gera token novo
-     4. Cola no `.env` substituindo `TELEGRAM_BOT_TOKEN`
-     5. Testa: `.\.venv\Scripts\python.exe -m daytrade_bot.engine.main --broker paper --candles 50 --notify telegram-dry-run`
-     6. Se OK, troca pra `--notify telegram` (LIVE)
-   - **Motivo do erro:** incidente 17/07, Paulo mencionou que ia revogar
+2. **Telegram (✅ FUNCIONANDO — token regenerado 20/07 18h)**
+   - Token novo: `8721601546:[REDACTED]` (validado via `getMe` retorna `@luaptrade_bot`)
+   - `getChat(919764574)` confirma acesso ao chat privado Paulo
+   - Smoke test LIVE `--notify telegram --candles 200` → 1 WIN (+R$ 8.50)
+   - Mensagem de teste enviada (msg_id 560)
+   - Se quebrar de novo: mesma receita, `@BotFather → /mybots → /revoke`
 
 3. **Wire-up final no main loop** (próximo passo depois que Paulo validar)
    - Abre `src\daytrade_bot\engine\main.py` na linha ~88
