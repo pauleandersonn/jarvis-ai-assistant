@@ -30,6 +30,7 @@ Cada projeto tem um arquivo próprio em `./Projects/<slug>.md`.
 
 - `jarvis-persona.md` — constituição cognitiva do JARVIS (prompt expandido, raciocínio, especialidade, limites)
 - `integrations.md` — serviços externos conectados (Gmail, Calendar, OAuth tokens, endpoints)
+- `pc-runbook-2026-07-20.md` — **runbook do dia**: o que Paulo precisa fazer quando sentar no PC (bot finanças Fly, webhook trade-bot, limpezas)
 - `Projects/` — um arquivo `.md` por projeto (objetivo, tarefas, decisões, próximos passos)
 - `decisions.md` — log de decisões importantes (cross-project)
 - `tasks.md` — tarefas pendentes globais
@@ -43,4 +44,4 @@ Cada projeto tem um arquivo próprio em `./Projects/<slug>.md`.
 5. **Antes de responder**, JARVIS consulta `jarvis-persona.md` para alinhar tom, raciocínio e formato.
 
 ## Última atualização
-2026-07-20 — Gmail + Google Calendar integrados (integrations.md criado).
+2026-07-20 — Gmail + Google Calendar integrados; **day-trade-bot ↔ JARVIS via webhook** (4 sinais no buffer); runbook do PC criado em `pc-runbook-2026-07-20.md`.
