@@ -942,6 +942,198 @@ async def whatsapp_signal_send(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
+# ---------- Church Radar (comunicação ministerial) ----------
+# Monitora contas de igrejas no IG/FB, detecta oportunidades pastorais
+# (visitantes, pedidos de oração, crises), gera conteúdo devocional e posts.
+@app.get("/api/church/radar/stats")
+def church_radar_stats() -> JSONResponse:
+    """Stats agregadas do radar ministerial."""
+    from Brain.integrations.church_radar_store import get_stats
+    return JSONResponse(get_stats())
+
+
+@app.post("/api/church/radar/accounts")
+async def church_radar_add_account(request: Request) -> JSONResponse:
+    """Adiciona conta de igreja pra monitorar.
+
+    POST {
+      "platform": "instagram" | "facebook",
+      "handle": "@lagoinhamanaus",
+      "church_name": "Lagoinha Manaus",
+      "denomination": "evangelica",
+      "city": "Manaus", "state": "AM",
+      "notes": "Igreja da família, monitorar cultos e visitantes"
+    }
+    """
+    from Brain.integrations.church_radar_store import add_account
+    body = await request.json()
+    result = add_account(
+        platform=body.get("platform", "instagram"),
+        handle=body.get("handle", ""),
+        church_name=body.get("church_name", ""),
+        denomination=body.get("denomination", ""),
+        city=body.get("city", ""),
+        state=body.get("state", ""),
+        notes=body.get("notes", ""),
+    )
+    return JSONResponse(result)
+
+
+@app.get("/api/church/radar/accounts")
+def church_radar_list_accounts() -> JSONResponse:
+    """Lista contas de igrejas monitoradas."""
+    from Brain.integrations.church_radar_store import list_accounts
+    return JSONResponse({"count": 0, "accounts": list_accounts()})
+
+
+@app.post("/api/church/radar/scan")
+async def church_radar_scan_post(request: Request) -> JSONResponse:
+    """Analisa 1 post (texto) e classifica como oportunidade ministerial.
+
+    POST {
+      "account_id": "abc123" (opcional, associa a uma conta),
+      "platform": "instagram" (default),
+      "source": "comment" | "dm" | "post" | "ad",
+      "source_id": "comment-12345",
+      "author_name": "Maria",
+      "author_handle": "@maria",
+      "text": "Adorei o culto de domingo! Primeira vez lá, foi incrível."
+    }
+    """
+    from Brain.actions.church_radar import classify_post
+    from Brain.integrations.church_radar_store import add_radar_item
+    # Tolera UTF-8 e Latin-1 (PowerShell às vezes manda CP1252)
+    raw_body = await request.body()
+    try:
+        body = json.loads(raw_body.decode("utf-8"))
+    except UnicodeDecodeError:
+        body = json.loads(raw_body.decode("latin-1"))
+    text = body.get("text", "").strip()
+    if not text:
+        return JSONResponse({"ok": False, "error": "text vazio"}, status_code=400)
+    classification = classify_post(text)
+    item = add_radar_item(
+        account_id=body.get("account_id", ""),
+        platform=body.get("platform", "instagram"),
+        source=body.get("source", "comment"),
+        source_id=body.get("source_id", ""),
+        author_name=body.get("author_name", ""),
+        author_handle=body.get("author_handle", ""),
+        raw_text=text,
+        themes=classification["themes"],
+        opportunities=classification["opportunities"],
+        urgency=classification["urgency"],
+        suggested_action=classification["suggested_action"],
+        score=classification["score"],
+    )
+    return JSONResponse({
+        "ok": True,
+        "classification": classification,
+        "item": item,
+    })
+
+
+@app.get("/api/church/radar/items")
+def church_radar_list_items(
+    status: str = "",
+    urgency: str = "",
+    account_id: str = "",
+    limit: int = 50,
+) -> JSONResponse:
+    """Lista oportunidades ministeriais detectadas (filtros opcionais)."""
+    from Brain.integrations.church_radar_store import list_radar_items
+    items = list_radar_items(
+        status=status or None,
+        urgency=urgency or None,
+        account_id=account_id or None,
+        limit=limit,
+    )
+    return JSONResponse({"count": len(items), "items": items})
+
+
+@app.post("/api/church/radar/items/{item_id}/status")
+async def church_radar_update_status(item_id: str, request: Request) -> JSONResponse:
+    """Atualiza status de uma oportunidade ministerial.
+
+    POST {"status": "acionado" | "resolvido" | "arquivado", "notes": "..."}
+    """
+    from Brain.integrations.church_radar_store import update_radar_status
+    body = await request.json()
+    ok = update_radar_status(
+        item_id,
+        body.get("status", ""),
+        notes=body.get("notes", ""),
+    )
+    return JSONResponse({"ok": ok, "id": item_id})
+
+
+@app.post("/api/church/radar/devocional")
+async def church_radar_generate_devotional(request: Request) -> JSONResponse:
+    """Gera devocional diário (com versículo, reflexão, oração).
+
+    POST {
+      "theme": "ansiedade" | "fé" | "família" | "amor" | ...,
+      "book": "Filipenses" (opcional, customizado),
+      "chapter": 4,
+      "verse": 6
+    }
+    """
+    from Brain.actions.church_radar import generate_devotional_text
+    from Brain.integrations.church_radar_store import add_generated_content
+    body = await request.json()
+    devocional = generate_devotional_text(
+        theme=body.get("theme", ""),
+        book=body.get("book", ""),
+        chapter=int(body.get("chapter", 0)),
+        verse=int(body.get("verse", 0)),
+    )
+    stored = add_generated_content(
+        kind="devocional",
+        theme=body.get("theme", ""),
+        title=devocional["title"],
+        content=devocional,
+    )
+    return JSONResponse({"ok": True, "devocional": devocional, "stored_id": stored["id"]})
+
+
+@app.post("/api/church/radar/post")
+async def church_radar_generate_post(request: Request) -> JSONResponse:
+    """Gera sugestão de post para rede social de igreja.
+
+    POST {
+      "theme": "domingo" | "jejum" | "festa junina" | "família" | ...,
+      "format": "instagram" | "facebook" | "stories" | "reels"
+    }
+    """
+    from Brain.actions.church_radar import generate_church_post_suggestion
+    from Brain.integrations.church_radar_store import add_generated_content
+    body = await request.json()
+    post = generate_church_post_suggestion(
+        theme=body.get("theme", ""),
+        format=body.get("format", "instagram"),
+    )
+    stored = add_generated_content(
+        kind=f"post_{post['format']}",
+        theme=body.get("theme", ""),
+        title=f"Post {post['format'].title()}: {body.get('theme', '')}",
+        content=post,
+    )
+    return JSONResponse({"ok": True, "post": post, "stored_id": stored["id"]})
+
+
+@app.get("/api/church/radar/content")
+def church_radar_list_content(kind: str = "", theme: str = "",
+                              limit: int = 50) -> JSONResponse:
+    """Lista conteúdo gerado (devocionais, posts)."""
+    from Brain.integrations.church_radar_store import list_generated_content
+    items = list_generated_content(
+        kind=kind or None,
+        theme=theme or None,
+        limit=limit,
+    )
+    return JSONResponse({"count": len(items), "items": items})
+
+
 # ---------- Telegram Opportunities Layer ----------
 # Detecta oportunidades de negocio a partir de mensagens do Telegram.
 # 3 caminhos de entrada:
