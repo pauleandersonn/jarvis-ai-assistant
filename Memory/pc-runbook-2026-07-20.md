@@ -74,38 +74,52 @@ Paulo não tava no PC pra colar token Telegram novo.
 
 **Onde:** `C:\Users\paule\Documents\PROGRAMAÇÃO\day-trade-bot\.env`
 
-**Estado atual:** WebhookNotifier já foi implementado e commitado (`fa9bfe1`).
-JARVIS já recebe sinais (4 eventos no buffer). Falta **ativar no main loop**.
+**Estado atual (20/07):** ✅ WebhookNotifier JÁ foi implementado (`fa9bfe1`),
+testado E2E (buffer JARVIS: 5→20 sinais em 1 backtest), `--notify webhook`
+já tá wired no main.py. **Telegram NÃO tá funcionando** (token revogado
+no incidente 17/07 — HTTP 401 Unauthorized).
 
-**O que fazer:**
+**Backlog de execução:**
 
-1. **Criar `.env`** (copia do `.env.example`):
+1. **Webhook (FUNCIONANDO — opcional)**
+   - Token compartilhado já tá no `.env`
+   - Roda: `.\.venv\Scripts\python.exe -m daytrade_bot.engine.main --broker paper --candles 1000 --notify webhook`
+   - Ver no JARVIS: drawer → aba Trade → 12+ cards aparecem
+
+2. **Telegram (QUEBRADO — precisa BotFather)**
+   - Token atual (`8721608546:...kXiE`) retorna **HTTP 401** = revogado
+   - Pra reativar:
+     1. Abre `@BotFather` no Telegram (celular)
+     2. `/mybots` → escolhe `@luaptrade_bot`
+     3. `/revoke` → gera token novo
+     4. Cola no `.env` substituindo `TELEGRAM_BOT_TOKEN`
+     5. Testa: `.\.venv\Scripts\python.exe -m daytrade_bot.engine.main --broker paper --candles 50 --notify telegram-dry-run`
+     6. Se OK, troca pra `--notify telegram` (LIVE)
+   - **Motivo do erro:** incidente 17/07, Paulo mencionou que ia revogar
+
+3. **Wire-up final no main loop** (próximo passo depois que Paulo validar)
+   - Abre `src\daytrade_bot\engine\main.py` na linha ~88
+   - Troca `notifier = NullNotifier()` por lógica que escolhe baseado em env var:
+     ```python
+     notifier_mode = os.environ.get('DAYTRADE_NOTIFIER', 'webhook')
+     if notifier_mode == 'telegram':
+         notifier = TelegramNotifier.from_env()
+     elif notifier_mode == 'webhook':
+         notifier = WebhookNotifier.from_env()
+     ```
+   - Ou mais simples: adicionar `--notify both` (telegram + webhook ao mesmo tempo)
+
+4. **Rodar backtest real (já funciona):**
    ```powershell
    cd "C:\Users\paule\Documents\PROGRAMAÇÃO\day-trade-bot"
-   copy .env.example .env
-   notepad .env
-   ```
-
-2. **Colar o token compartilhado** (mesma string do JARVIS):
-   ```
-   JARVIS_WEBHOOK_TOKEN=trade-webhook-secret-Tule0D_chRqA7gpymQMx1qao_vCpj0TXwAfXyEcD1As
-   ```
-   - Esse token já tá em `C:\Users\paule\Projects\jarvis-ai-assistant\.env`
-
-3. **Ligar WebhookNotifier no main.py:**
-   - Abre `src\daytrade_bot\engine\main.py`
-   - Troca `TelegramNotifier` ou `NullNotifier` por `WebhookNotifier.from_env()`
-   - (Ou passa pelo CLI: `--notifier webhook` se eu adicionar flag)
-
-4. **Rodar backtest:**
-   ```powershell
    .\.venv\Scripts\Activate.ps1
-   python -m daytrade_bot.engine.main --broker paper --candles 1000
+   python -m daytrade_bot.engine.main --broker paper --candles 1000 --notify webhook
    ```
 
 5. **Conferir no JARVIS:** http://localhost:8788 → drawer → aba **Trade**
    - Cards coloridos aparecem (verde=CALL, vermelho=PUT)
    - Toast azul no canto superior direito quando chega sinal
+   - Buffer ring tem 50 slots (deque maxlen=50, descarta antigos)
 
 **Bug antigo resolvido:** HTTP 500 era causado pelo PYTHONPATH do shell apontando
 pro hermes-venv (pydantic_core binário incompatível com Python 3.14). Pra
@@ -115,6 +129,11 @@ cd "C:\Users\paule\Projects\jarvis-ai-assistant"
 $env:PYTHONPATH = ""
 & "C:\Users\paule\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe" -u dashboard.py
 ```
+
+**Bug NOVO resolvido (20/07):** `.env` não era carregado pelo main.py (só
+TelegramNotifier/WebhookNotifier liam `os.environ` direto). Adicionado
+`load_dotenv()` no main.py — agora `--notify telegram/webhook` funciona
+via CLI sem precisar setar env no shell.
 
 ---
 
