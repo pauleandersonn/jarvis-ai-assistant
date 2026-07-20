@@ -25,6 +25,7 @@ Cada projeto tem um arquivo próprio em `./Projects/<slug>.md`.
 | 7 | Ofertas Zero92 | ofertas-zero92 | Ativo |
 | 8 | Mídia Criativa do Reino | midia-criativa-do-reino | Ativo |
 | 9 | Finance Agent | finance-agent | Ativo |
+| 10 | WhatsApp JARVIS (sketch) | whatsapp-jarvis-sketch | Sketch |
 
 ## Índice de seções
 
