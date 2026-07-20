@@ -1104,6 +1104,107 @@ function switchTab(tab) {
     p.classList.toggle("active", p.id === "panel-" + tab);
   });
   if (tab === "projects") refreshProjects();
+  if (tab === "email") loadInboxSummary();
+  if (tab === "agenda") loadAgendaSummary();
+}
+
+// Fecha o drawer e volta pra aba principal (Conversa).
+function closeDrawerToChat() {
+  switchTab("chat");
+  if (state.drawerOpen) toggleDrawer();
+}
+
+// ───────── Email (Gmail) ─────────
+async function loadInboxSummary() {
+  const out = document.getElementById("email-result");
+  out.className = "info-block active";
+  out.textContent = "Carregando inbox…";
+  try {
+    const r = await fetch("/api/email/inbox-summary", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ max_results: 10 }),
+    });
+    const j = await r.json();
+    if (j.error || j.status === "error") {
+      out.textContent = "Erro: " + (j.error || j.message || "desconhecido");
+      return;
+    }
+    // O endpoint retorna texto-resumo (markdown/texto livre).
+    out.textContent = j.summary || j.text || JSON.stringify(j, null, 2);
+  } catch (err) {
+    out.textContent = "Falha: " + err.message;
+  }
+}
+
+async function searchEmails() {
+  const query = document.getElementById("email-search-input").value.trim();
+  if (!query) {
+    document.getElementById("email-result").textContent = "Digite um termo pra buscar.";
+    return;
+  }
+  const out = document.getElementById("email-result");
+  out.className = "info-block active";
+  out.textContent = "Buscando \"" + query + "\"…";
+  try {
+    const r = await fetch("/api/email/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, max_results: 10 }),
+    });
+    const j = await r.json();
+    if (j.error || j.status === "error") {
+      out.textContent = "Erro: " + (j.error || j.message || "desconhecido");
+      return;
+    }
+    out.textContent = j.results || j.summary || j.text || JSON.stringify(j, null, 2);
+  } catch (err) {
+    out.textContent = "Falha: " + err.message;
+  }
+}
+
+// ───────── Agenda (Calendar) ─────────
+async function loadAgendaSummary() {
+  const out = document.getElementById("agenda-result");
+  out.className = "info-block active";
+  out.textContent = "Carregando agenda…";
+  try {
+    const r = await fetch("/api/calendar/agenda-summary", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ days: 7 }),
+    });
+    const j = await r.json();
+    if (j.error || j.status === "error") {
+      out.textContent = "Erro: " + (j.error || j.message || "desconhecido");
+      return;
+    }
+    out.textContent = j.summary || j.text || JSON.stringify(j, null, 2);
+  } catch (err) {
+    out.textContent = "Falha: " + err.message;
+  }
+}
+
+async function listCalendar() {
+  const period = document.getElementById("calendar-list-input").value.trim() || "hoje";
+  const out = document.getElementById("agenda-result");
+  out.className = "info-block active";
+  out.textContent = "Listando eventos (" + period + ")…";
+  try {
+    const r = await fetch("/api/calendar/list", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ period, max_results: 20 }),
+    });
+    const j = await r.json();
+    if (j.error || j.status === "error") {
+      out.textContent = "Erro: " + (j.error || j.message || "desconhecido");
+      return;
+    }
+    out.textContent = j.events || j.summary || j.text || JSON.stringify(j, null, 2);
+  } catch (err) {
+    out.textContent = "Falha: " + err.message;
+  }
 }
 
 // ───────── Projects (memory) ─────────

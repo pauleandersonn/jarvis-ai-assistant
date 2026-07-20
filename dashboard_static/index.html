@@ -265,8 +265,12 @@
 </button>
 
 <section class="drawer" id="drawer">
+  <button class="drawer-collapse" id="drawer-collapse" onclick="closeDrawerToChat()" title="Voltar pro JARVIS (esconde o drawer)">▾ Voltar pro JARVIS</button>
+
   <div class="drawer-tabs">
     <button class="drawer-tab active" data-tab="chat">Conversa</button>
+    <button class="drawer-tab" data-tab="email">Email</button>
+    <button class="drawer-tab" data-tab="agenda">Agenda</button>
     <button class="drawer-tab" data-tab="projects">Projetos</button>
     <button class="drawer-tab" data-tab="research">Pesquisa</button>
     <button class="drawer-tab" data-tab="weather">Clima</button>
@@ -274,6 +278,36 @@
     <button class="drawer-tab" data-tab="controls">Controles</button>
     <button class="drawer-tab" data-tab="logs">Logs</button>
     <button class="drawer-tab" data-tab="hermes">⚷ Hermes</button>
+  </div>
+
+  <!-- Email tab -->
+  <div class="drawer-panel" id="panel-email">
+    <div class="panel-header">
+      <h3>Email</h3>
+      <button class="ghost-btn" onclick="loadInboxSummary()">Atualizar</button>
+    </div>
+    <div class="control-row">
+      <input type="text" id="email-search-input" placeholder="Buscar emails (ex: cobrança, viagem)" />
+      <button class="primary-btn" onclick="searchEmails()">Buscar</button>
+    </div>
+    <div id="email-result" class="info-block">
+      <div class="empty">Carregue a inbox pra ver os últimos emails.</div>
+    </div>
+  </div>
+
+  <!-- Agenda tab -->
+  <div class="drawer-panel" id="panel-agenda">
+    <div class="panel-header">
+      <h3>Agenda</h3>
+      <button class="ghost-btn" onclick="loadAgendaSummary()">Atualizar</button>
+    </div>
+    <div class="control-row">
+      <input type="text" id="calendar-list-input" placeholder="Período (ex: hoje, 7 dias)" value="hoje" />
+      <button class="primary-btn" onclick="listCalendar()">Listar</button>
+    </div>
+    <div id="agenda-result" class="info-block">
+      <div class="empty">Carregue a agenda pra ver os próximos compromissos.</div>
+    </div>
   </div>
 
   <!-- Chat tab -->

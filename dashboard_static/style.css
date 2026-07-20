@@ -1370,6 +1370,36 @@ body.state-listening .mic-btn {
   font-weight: 600;
 }
 
+/* Botao "Voltar pro JARVIS" — aparece dentro do drawer aberto, no topo,
+   fecha o drawer e volta pra aba Conversa. */
+.drawer-collapse {
+  display: block;
+  width: 100%;
+  padding: 8px 14px;
+  margin: 6px 8px 0 8px;
+  background: transparent;
+  color: var(--text-muted, #94a3b8);
+  border: 1px dashed rgba(148, 163, 184, 0.35);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  text-align: center;
+}
+
+.drawer-collapse:hover {
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--text, #e2e8f0);
+  border-color: rgba(148, 163, 184, 0.6);
+}
+
+.drawer-collapse::before {
+  content: "▾ ";
+  font-size: 14px;
+}
+
 /* ───────── Chat list ───────── */
 .chat-list {
   display: flex;
