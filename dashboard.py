@@ -717,6 +717,18 @@ async def api_trade_webhook(payload: TradeWebhookPayload, request: Request) -> J
     if len(TRADE_SIGNAL_BUFFER) > TRADE_SIGNAL_BUFFER_MAX:
         del TRADE_SIGNAL_BUFFER[: len(TRADE_SIGNAL_BUFFER) - TRADE_SIGNAL_BUFFER_MAX]
 
+    # Grava também no DB de sinais (pra correlação com Telegram)
+    try:
+        from Brain.actions.telegram_signal_linker import record_signal
+        record_signal(
+            symbol=entry.get("symbol", ""),
+            direction=entry.get("direction") or entry.get("action", ""),
+            signal_source="day-trade-bot",
+            metadata=entry,
+        )
+    except Exception as exc:  # noqa: BLE001
+        LOG.warning("record_signal falhou (sinal ainda assim bufferizado): %s", exc)
+
     # Broadcast via WebSocket (best-effort; clients that aren't connected just miss it).
     try:
         await ws_manager.broadcast({"type": "trade_signal", "data": entry})
@@ -737,6 +749,422 @@ def api_trade_recent(limit: int = 20) -> JSONResponse:
     limit = max(1, min(int(limit), TRADE_SIGNAL_BUFFER_MAX))
     recent = TRADE_SIGNAL_BUFFER[-limit:][::-1]  # newest first
     return JSONResponse({"count": len(recent), "events": recent})
+
+
+# ---------- WhatsApp Cloud API (Meta) ----------
+# Webhook recebe eventos da Meta. Análise de oportunidades com LLM.
+# Doc: https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks
+@app.get("/api/integrations/whatsapp/webhook")
+def whatsapp_webhook_verify(
+    hub_mode: str = "",
+    hub_verify_token: str = "",
+    hub_challenge: str = "",
+) -> Response:
+    """Handshake inicial da Meta (GET). Verifica token, retorna challenge."""
+    from Brain.integrations.whatsapp import verify_webhook
+    challenge = verify_webhook(hub_mode, hub_verify_token, hub_challenge)
+    if challenge:
+        return Response(content=challenge, media_type="text/plain")
+    return Response(content="Forbidden", status_code=403)
+
+
+@app.post("/api/integrations/whatsapp/webhook")
+async def whatsapp_webhook_receive(request: Request) -> JSONResponse:
+    """Recebe evento da Meta (POST). Extrai mensagem, analisa, armazena."""
+    from Brain.integrations.whatsapp import extract_message, mark_as_read
+    from Brain.actions.whatsapp_analyzer import (
+        analyze_conversation,
+        quick_keyword_scan,
+    )
+    from Brain.integrations.opportunities_store import add_opportunity
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "JSON inválido"}, status_code=400)
+
+    msg = extract_message(payload)
+    if not msg:
+        # Pode ser um update de status (delivered/read), não mensagem de texto
+        return JSONResponse({"ok": True, "skipped": "no_text_message"})
+
+    # 1) Triagem rápida sem LLM (economia de tokens)
+    scan = quick_keyword_scan(msg["body"])
+    if not scan["vertical_match"]:
+        # Conversa casual sem nenhuma palavra-chave — pula
+        return JSONResponse({"ok": True, "skipped": "no_business_keywords", "scan": scan})
+
+    # 2) Análise completa via LLM
+    analysis_result = analyze_conversation(
+        messages=[msg["body"]],
+        vertical="auto",
+        context=f"Contato: {msg['profile_name']} ({msg['from']})",
+    )
+    if not analysis_result.get("ok"):
+        return JSONResponse(
+            {"ok": False, "error": "LLM analysis failed", "detail": analysis_result},
+            status_code=500,
+        )
+
+    # 3) Salva oportunidade no DB
+    opp = add_opportunity(
+        chat_phone=msg["from"],
+        chat_name=msg["profile_name"],
+        analysis=analysis_result["analysis"],
+        raw_message=msg["body"],
+        mensagem_id=msg["message_id"],
+    )
+
+    # 4) Marca azulinho (best-effort)
+    try:
+        mark_as_read(msg["message_id"])
+    except Exception:
+        pass
+
+    return JSONResponse({
+        "ok": True,
+        "scan": scan,
+        "analysis": analysis_result["analysis"],
+        "opportunity_id": opp.get("id"),
+        "tokens_used": analysis_result.get("tokens_used", 0),
+    })
+
+
+@app.get("/api/integrations/whatsapp/opportunities")
+def whatsapp_opportunities(
+    vertical: str = "",
+    status: str = "",
+    limit: int = 50,
+) -> JSONResponse:
+    """Lista oportunidades detectadas. Filtros opcionais por vertical/status."""
+    from Brain.integrations.opportunities_store import list_opportunities
+    opps = list_opportunities(
+        vertical=vertical or None,
+        status=status or None,
+        limit=max(1, min(int(limit), 200)),
+    )
+    return JSONResponse({"count": len(opps), "opportunities": opps})
+
+
+@app.get("/api/integrations/whatsapp/opportunities/stats")
+def whatsapp_opportunities_stats() -> JSONResponse:
+    """Stats agregadas (totais por vertical/status, hot leads)."""
+    from Brain.integrations.opportunities_store import get_stats
+    return JSONResponse(get_stats())
+
+
+@app.post("/api/integrations/whatsapp/opportunities/{opp_id}/status")
+async def whatsapp_opportunity_update_status(opp_id: str, request: Request) -> JSONResponse:
+    """Atualiza status de uma oportunidade (novo/contatado/convertido/perdido)."""
+    from Brain.integrations.opportunities_store import update_status
+    body = await request.json()
+    new_status = body.get("status", "").strip()
+    ok = update_status(opp_id, new_status)
+    return JSONResponse({"ok": ok, "id": opp_id, "status": new_status})
+
+
+@app.post("/api/integrations/whatsapp/send")
+async def whatsapp_send_message(request: Request) -> JSONResponse:
+    """Envia mensagem de texto 1:1 (debug/teste). POST {"to": "+55...", "body": "..."}."""
+    from Brain.integrations.whatsapp import send_text_message, is_configured
+    if not is_configured():
+        return JSONResponse(
+            {"ok": False, "error": "WhatsApp não configurado (env vars faltando)"},
+            status_code=503,
+        )
+    body = await request.json()
+    result = send_text_message(
+        to_phone=body.get("to", ""),
+        body=body.get("body", ""),
+    )
+    return JSONResponse(result)
+
+
+@app.get("/api/integrations/whatsapp/health")
+def whatsapp_health() -> JSONResponse:
+    """Health check — testa credenciais via GET na Meta API."""
+    from Brain.integrations.whatsapp import health_check, is_configured
+    return JSONResponse({
+        "configured": is_configured(),
+        "api_check": health_check() if is_configured() else None,
+    })
+
+
+@app.get("/api/integrations/whatsapp/signal/preview")
+def whatsapp_signal_preview(
+    symbol: str = "EURUSD-OTC",
+    time: str = "12:50",
+    direction: str = "CALL",
+    expiry: str = "5min",
+    gale: int = 1,
+) -> JSONResponse:
+    """Preview do template de sinal (formato Pauleanderson/Pollar).
+
+    Nao envia nada — so renderiza o texto. Util pra debug do template
+    antes de configurar as credenciais Meta.
+    """
+    from Brain.integrations.whatsapp import format_signal
+    body = format_signal(
+        symbol=symbol,
+        time_str=time,
+        direction=direction,
+        expiry=expiry,
+        gale_available=bool(int(gale)),
+    )
+    return JSONResponse({"ok": True, "preview": body})
+
+
+@app.post("/api/integrations/whatsapp/signal")
+async def whatsapp_signal_send(request: Request) -> JSONResponse:
+    """Envia sinal formatado pra um contato do WhatsApp.
+
+    POST {
+      "to": "+5591987654321",
+      "symbol": "EURUSD-OTC",
+      "time": "12:50",        # Manaus TZ
+      "direction": "CALL",     # ou "PUT"
+      "expiry": "5min",
+      "gale": true,
+      "preview_only": false    # true = so retorna texto, nao envia
+    }
+    """
+    from Brain.integrations.whatsapp import send_signal_message
+    body = await request.json()
+    result = send_signal_message(
+        to_phone=body.get("to", ""),
+        symbol=body.get("symbol", "EURUSD-OTC"),
+        time_str=body.get("time", "00:00"),
+        direction=body.get("direction", "CALL"),
+        expiry=body.get("expiry", "5min"),
+        gale_available=bool(body.get("gale", True)),
+        preview_only=bool(body.get("preview_only", False)),
+    )
+    return JSONResponse(result)
+
+
+# ---------- Telegram Opportunities Layer ----------
+# Detecta oportunidades de negocio a partir de mensagens do Telegram.
+# 3 caminhos de entrada:
+#   (a) Webhook python-telegram-bot (POST com update)
+#   (b) Polling manual (envia mensagem avulsa)
+#   (c) Correlacao automatica com sinais de trade
+@app.post("/api/integrations/telegram/inbound")
+async def telegram_inbound_message(request: Request) -> JSONResponse:
+    """Recebe msg do Telegram (via webhook python-telegram-bot ou polling).
+
+    POST {
+      "chat_id": 123,
+      "chat_title": "Grupo Trade",
+      "chat_type": "group" | "private" | "supergroup",
+      "sender_name": "João",
+      "sender_id": 12345,
+      "message_id": 678,
+      "text": "Conteudo da mensagem"
+    }
+    """
+    from Brain.actions.telegram_analyzer import analyze_message
+    from Brain.integrations.telegram_opportunities_store import add_opportunity
+    from Brain.actions.telegram_signal_linker import (
+        add_recent_message,
+        get_recent_messages,
+        correlate_signal_with_messages,
+        generate_correlation_opportunity,
+    )
+
+    body = await request.json()
+    text = body.get("text", "").strip()
+    if not text:
+        return JSONResponse({"ok": False, "error": "text vazio"}, status_code=400)
+
+    chat_id = int(body.get("chat_id", 0))
+    chat_title = body.get("chat_title", "")
+    chat_type = body.get("chat_type", "private")
+    sender_name = body.get("sender_name", "?")
+    sender_id = int(body.get("sender_id", 0))
+
+    # 1) Adiciona no buffer RAM pra correlação futura
+    add_recent_message(chat_id, sender_name, text)
+
+    # 2) Analisa com LLM (ou triagem rápida)
+    result = analyze_message(
+        text=text,
+        chat_context=f"{chat_title} ({chat_type})",
+        sender_name=sender_name,
+    )
+    if not result.get("ok"):
+        return JSONResponse(
+            {"ok": False, "error": "análise falhou", "detail": result},
+            status_code=500,
+        )
+
+    analysis = result["analysis"]
+    category = analysis.get("category", "conversa_casual")
+
+    # 3) Se for casual, descarta (mas loga)
+    if category == "conversa_casual":
+        return JSONResponse({
+            "ok": True,
+            "skipped": "conversa_casual",
+            "analysis": analysis,
+        })
+
+    # 4) Persiste oportunidade
+    opp = add_opportunity(
+        chat_id=chat_id,
+        chat_title=chat_title,
+        chat_type=chat_type,
+        sender_name=sender_name,
+        sender_id=sender_id,
+        message_id=int(body.get("message_id", 0)),
+        message_text=text,
+        analysis=analysis,
+    )
+
+    # 5) Correlação com sinais: vê se há sinal de trade recente pra esse par
+    symbol_keywords = ["EUR", "GBP", "USD", "JPY", "AUD", "CAD"]
+    mentioned_symbol = next(
+        (s for s in symbol_keywords if s in text.upper()), None
+    )
+    if mentioned_symbol and chat_type in ("group", "supergroup"):
+        # Vê se teve sinal há 15 min
+        from Brain.actions.telegram_signal_linker import get_signals_last_n_minutes
+        recent_signals = get_signals_last_n_minutes(15, symbol=mentioned_symbol)
+        if recent_signals:
+            correlation = correlate_signal_with_messages(
+                symbol=mentioned_symbol,
+                direction="CALL",  # heurística simples
+                recent_msgs=get_recent_messages(chat_id, since_minutes=15),
+            )
+            if correlation:
+                generate_correlation_opportunity(correlation, chat_id, chat_title)
+
+    return JSONResponse({
+        "ok": True,
+        "category": category,
+        "score": analysis.get("score"),
+        "lead_quente": analysis.get("lead_quente"),
+        "opportunity_id": opp.get("id"),
+        "tokens_used": result.get("tokens_used", 0),
+    })
+
+
+@app.get("/api/integrations/telegram/opportunities")
+def telegram_opportunities(
+    category: str = "",
+    status: str = "",
+    min_score: float = 0.0,
+    only_hot: int = 0,
+    limit: int = 50,
+) -> JSONResponse:
+    """Lista oportunidades detectadas."""
+    from Brain.integrations.telegram_opportunities_store import list_opportunities
+    opps = list_opportunities(
+        category=category or None,
+        status=status or None,
+        min_score=float(min_score),
+        only_hot=bool(int(only_hot)),
+        limit=max(1, min(int(limit), 200)),
+    )
+    return JSONResponse({"count": len(opps), "opportunities": opps})
+
+
+@app.get("/api/integrations/telegram/opportunities/stats")
+def telegram_opportunities_stats() -> JSONResponse:
+    """Stats agregadas."""
+    from Brain.integrations.telegram_opportunities_store import get_stats
+    return JSONResponse(get_stats())
+
+
+@app.get("/api/integrations/telegram/opportunities/top")
+def telegram_opportunities_top(limit: int = 5) -> JSONResponse:
+    """Top N oportunidades pra briefing diário (novas + hot + score alto)."""
+    from Brain.integrations.telegram_opportunities_store import get_top_opportunities
+    return JSONResponse({
+        "count": limit,
+        "opportunities": get_top_opportunities(limit),
+    })
+
+
+@app.get("/api/integrations/telegram/opportunities/brief")
+def telegram_opportunities_brief_audio() -> Response:
+    """Briefing em áudio das top oportunidades do dia (TTS pt-BR-AntonioNeural)."""
+    from Brain.integrations.telegram_opportunities_store import get_top_opportunities
+    from Brain.actions.telegram_analyzer import generate_daily_brief
+    opps = get_top_opportunities(5)
+    texto = generate_daily_brief(opps)
+
+    try:
+        import asyncio
+        import edge_tts
+
+        async def _synth():
+            comm = edge_tts.Communicate(
+                texto, voice="pt-BR-AntonioNeural", rate="-8%", pitch="-4Hz",
+            )
+            import tempfile
+            tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+            tmp.close()
+            await comm.save(tmp.name)
+            with open(tmp.name, "rb") as f:
+                return f.read()
+
+        audio_bytes = asyncio.run(_synth())
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+    return Response(
+        content=audio_bytes,
+        media_type="audio/mpeg",
+        headers={"Content-Disposition": 'inline; filename="opp-brief.mp3"'},
+    )
+
+
+@app.post("/api/integrations/telegram/opportunities/{opp_id}/status")
+async def telegram_opportunity_status_update(opp_id: str, request: Request) -> JSONResponse:
+    """Atualiza status de uma oportunidade (novo/contatado/convertido/perdido)."""
+    from Brain.integrations.telegram_opportunities_store import update_status
+    body = await request.json()
+    ok = update_status(
+        opp_id,
+        body.get("status", ""),
+        notes=body.get("notes"),
+    )
+    return JSONResponse({"ok": ok, "id": opp_id})
+
+
+@app.post("/api/integrations/telegram/signal")
+async def telegram_signal_record(request: Request) -> JSONResponse:
+    """Registra um sinal de trade (chamado pelo webhook do day-trade-bot).
+
+    POST {
+      "symbol": "EURUSD-OTC",
+      "direction": "CALL" | "PUT",
+      "metadata": {...}    # opcional, fica salvo
+    }
+
+    Side effect: verifica correlação com chats Telegram recentes.
+    """
+    from Brain.actions.telegram_signal_linker import record_signal
+    body = await request.json()
+    result = record_signal(
+        symbol=body.get("symbol", ""),
+        direction=body.get("direction", ""),
+        signal_source=body.get("source", "day-trade-bot"),
+        metadata=body.get("metadata"),
+    )
+    return JSONResponse(result)
+
+
+@app.get("/api/integrations/telegram/signals/recent")
+def telegram_signals_recent(minutes: int = 30, symbol: str = "") -> JSONResponse:
+    """Sinais de trade recentes (últimos N minutos, filtro de símbolo opcional)."""
+    from Brain.actions.telegram_signal_linker import get_signals_last_n_minutes
+    sigs = get_signals_last_n_minutes(minutes, symbol=symbol or None)
+    return JSONResponse({
+        "minutes": minutes,
+        "count": len(sigs),
+        "signals": sigs,
+    })
 
 
 # ---------- Memory (projects, decisions, tasks) ----------
