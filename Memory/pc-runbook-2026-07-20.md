@@ -152,3 +152,61 @@ via CLI sem precisar setar env no shell.
 >
 > **Custo total:** $0/mês
 > **Risco:** Token Telegram ainda exposto do incidente 17/07 — revogar ANTES do deploy Fly
+---
+
+## Frente 4: Camada de Oportunidades IA (Telegram + WhatsApp) ✅ CONCLUÍDA 20/07 18h
+
+**Onde:** `C:\Users\paule\Projects\jarvis-ai-assistant\Brain\integrations\` + `Brain/actions\`
+
+### O que foi feito (commit 06db3c99)
+
+- **WhatsApp Meta Cloud API** (`Brain/integrations/whatsapp.py`)
+  - Cliente HTTP completo: `health_check`, `verify_webhook`, `send_text_message`, `send_signal_message`
+  - Formato de sinal Pauleanderson M5 com/sem gale
+- **WhatsApp Analyzer** (`Brain/actions/whatsapp_analyzer.py`)
+  - LLM classifica em: fotografia, filmagem, tecnologia, comunicação ministerial
+  - **Fallback heurístico** (roda offline sem API key!)
+  - Detecta orçamento (R$), reclamação, feature request
+- **Telegram Opportunities Store** (`Brain/integrations/telegram_opportunities_store.py`)
+  - SQLite `telegram_opportunities.db` com CRUD + stats
+  - Filtros: categoria, status, score mínimo, hot leads
+  - Status: novo → contatado → convertido/perdido
+- **Telegram Analyzer** (`Brain/actions/telegram_analyzer.py`)
+  - 5 categorias: lead_comercial, problema_cliente, ideia_produto, sinal_correlato, conversa_casual
+  - Triagem rápida com `\b` (evita "gale" match em "galera")
+  - Fallback heurístico (offline)
+- **Telegram Signal Linker** (`Brain/actions/telegram_signal_linker.py`)
+  - DB de sinais de trade com correlação 15min window
+  - Detecta: "pessoal falou de EUR enquanto saía sinal CALL"
+- **WhataApp opportunities store** (`Brain/integrations/opportunities_store.py`)
+  - Armazenamento genérico (não-Telegram) pra mensagens WhatsApp
+
+### 12 endpoints NOVOS no dashboard.py
+
+- `GET/POST /api/integrations/whatsapp/health`
+- `POST /api/integrations/whatsapp/webhook` (Meta verify)
+- `POST /api/integrations/whatsapp/analyze`
+- `POST /api/integrations/whatsapp/signal` (formato M5 Pauleanderson)
+- `POST /api/integrations/telegram/inbound` (recebe + classifica)
+- `GET /api/integrations/telegram/opportunities` (lista)
+- `GET /api/integrations/telegram/opportunities/stats` (agregados)
+- `GET /api/integrations/telegram/opportunities/top` (briefing)
+- `GET /api/integrations/telegram/opportunities/brief` (TTS pt-BR)
+- `POST /api/integrations/telegram/opportunities/{id}/status`
+- `POST /api/integrations/telegram/signal`
+- `GET /api/integrations/telegram/signals/recent`
+
+### Testes E2E (rodaram)
+
+11 oportunidades detectadas com 5 hot leads, 4 categorias distintas:
+- `lead_comercial`: Maria (Grupo Marketing): "quanto custa pra fazer um video?"
+- `problema_cliente`: Joao (Suporte): "bot parou, deu erro geral"
+- `ideia_produto`: Carla (Devs): "seria bom se tivesse auto-gale"
+- `sinal_correlato`: Pedro (Grupo Trade): "perdi no EUR/USD"
+
+### Próximos passos
+
+1. Wire python-telegram-bot no JARVIS pra escutar grupos reais (polling ou webhook)
+2. Criar cron que envia `/api/integrations/telegram/opportunities/brief` pro `@luap_pc_bot` às 18h
+3. Quando bot Finanças estiver no Fly, ligar as 2 pontas via webhook
+4. Configurar Meta Cloud API (whatsapp) com chip Vivo + Meta Business Manager (~3-7 dias)
