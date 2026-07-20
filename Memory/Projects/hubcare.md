@@ -3,6 +3,7 @@ name: HubCare
 slug: hubcare
 type: project
 status: active
+updated: 2026-07-20
 ---
 
 # HubCare

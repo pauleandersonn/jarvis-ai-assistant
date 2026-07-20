@@ -2,6 +2,7 @@
 name: Decisões Globais
 description: Log de decisões cross-project
 type: project
+updated: 2026-07-20
 ---
 
 # Decisões Globais

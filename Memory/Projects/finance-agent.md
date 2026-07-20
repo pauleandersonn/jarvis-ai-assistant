@@ -3,6 +3,7 @@ name: Finance Agent
 slug: finance-agent
 type: project
 status: active
+updated: 2026-07-20
 ---
 
 # Finance Agent

@@ -12,12 +12,21 @@ Pipeline for every user message:
 import pathlib
 
 from rich import print
-from webscout import FreeAI
+from webscout import FreeAI  # noqa: F401  -- kept for legacy fallback in llm_client
+
+from Brain.llm_client import complete as llm_complete, LLMUnavailable
+from Brain.integrations_router import route_integration_question
 
 from Brain.memory import (
     detect_project,
     get_global_context,
     get_project_context,
+    list_projects,
+)
+from Brain.hermes_bridge import (
+    get_hermes_context,
+    append_journal,
+    invalidate_cache as _hermes_invalidate,
 )
 
 # Resolve chat_hystory.txt relative to this file's parent.
@@ -142,6 +151,14 @@ DIRETRIZES OPERACIONAIS
 • Responda SEMPRE em português do Brasil. Objetivo, técnico e organizado. Sem enrolação.
 
 ═══════════════════════════════════════════════
+INTEGRAÇÕES ATIVAS (use a memória `integrations.md` para detalhes)
+═══════════════════════════════════════════════
+• Gmail conectado em `pauleandersongomes@gmail.com` — você PODE ler inbox, ler emails individuais, ENVIAR emails (sempre confirme antes de enviar).
+• Google Calendar conectado — você PODE listar eventos, criar eventos (sempre confirme antes), deletar.
+• Sempre que o usuário pedir algo sobre email ou agenda, USE as ferramentas (não diga que "não tem acesso"). Os endpoints estão no `integrations.md` que é carregado em cada conversa.
+• Quando agir via voz, prefira os endpoints `*_summary` que retornam string TTS-friendly. Para o dashboard por texto, prefira os endpoints completos (`/api/email/search`, `/api/calendar/list`).
+
+═══════════════════════════════════════════════
 ROUTING & EXECUTION RULES (adaptado de Mark-XLIX, CC BY-NC 4.0)
 ═══════════════════════════════════════════════
 • One-Call Policy: chame ferramentas uma única vez por solicitação. Não repita por eco, som ambiente ou incerteza. Após chamar, aguarde o resultado.
@@ -177,18 +194,14 @@ def _append_history(user_text: str, ai_text: str) -> None:
 
 
 def _ask_freeai(text: str) -> str:
+    """Compat wrapper (legacy name). Real logic now in Brain/llm_client.py.
+
+    Provider precedence: OpenRouter > Anthropic > Hermes-proxy > FreeAI.
+    Set the appropriate env var to activate; FreeAI is always the fallback.
+    """
     try:
-        ai = FreeAI()
-        raw = ai.ask(text)
-        if isinstance(raw, dict):
-            return (
-                raw.get("text")
-                or raw.get("message")
-                or raw.get("response")
-                or str(raw)
-            )
-        return str(raw)
-    except Exception as exc:  # noqa: BLE001
+        return llm_complete(text, max_tokens=1500)
+    except LLMUnavailable as exc:
         return f"AI brain error: {exc}"
 
 
@@ -234,6 +247,7 @@ def _build_prompt(text: str) -> str:
 
     Layout:
       [JARVIS_SYSTEM]
+      [HERMES context — shared memory from ~/.hermes/memories/, cached 5min]
       [global memory]
       [project context if detected]
       [user message + PT instruction]
@@ -244,6 +258,16 @@ def _build_prompt(text: str) -> str:
     loc_block = _weather_hint_block()
     if loc_block:
         parts.append(loc_block)
+
+    # Modo 1: injetar contexto do Hermes (memoria compartilhada). Cache 5min
+    # controlado internamente por hermes_bridge.get_hermes_context(). Passa
+    # a lista de projetos pra que o bridge re-sincronize o indice ~/.hermes.
+    try:
+        hermes_ctx = get_hermes_context(jarvis_projects=list_projects())
+        if hermes_ctx:
+            parts.append(hermes_ctx)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[yellow]hermes_bridge failed: {exc}[/yellow]")
 
     global_ctx = get_global_context()
     if global_ctx:
@@ -263,12 +287,32 @@ def Main_Brain(text: str) -> str:
     """Route `text` through web research if needed, else straight to FreeAI
     with memory + persona prepended.
     """
+    # Detecta o projeto uma vez pra (a) carregar contexto, (b) taggear o journal.
+    slug = detect_project(text)
+
     try:
         from Brain.researcher import research, needs_web_search
         use_web = needs_web_search(text)
     except Exception as exc:  # noqa: BLE001
         print(f"[yellow]researcher not available: {exc}[/yellow]")
         use_web = False
+
+    answer: str
+    # Modo 0: integracoes (email/calendar/status) -- bypass LLM.
+    # Quando a pergunta e sobre algo que temos endpoint interno, chama direto
+    # e retorna a string TTS-friendly. Evita o LLM alucinar ("nao tenho
+    # acesso") quando a verdade e outra.
+    try:
+        direct_answer = route_integration_question(text)
+        if direct_answer is not None:
+            _append_history(text, direct_answer)
+            try:
+                append_journal(text, direct_answer, project_slug=slug)
+            except Exception:
+                pass
+            return direct_answer
+    except Exception as exc:  # noqa: BLE001
+        print(f"[yellow]integrations router falhou, fallback LLM: {exc}[/yellow]")
 
     if use_web:
         try:
@@ -282,6 +326,11 @@ def Main_Brain(text: str) -> str:
                 ]
                 answer = answer + "\n\nFontes:\n" + "\n".join(source_lines)
             _append_history(text, answer)
+            # Modo 4: escreve no journal do Hermes (best-effort, nao bloqueia).
+            try:
+                append_journal(text, answer, project_slug=slug)
+            except Exception:
+                pass
             return answer
         except Exception as exc:  # noqa: BLE001
             print(f"[red]web research failed, falling back: {exc}[/red]")
@@ -289,4 +338,9 @@ def Main_Brain(text: str) -> str:
     prompt = _build_prompt(text)
     response = _ask_freeai(prompt)
     _append_history(text, str(response))
+    # Modo 4: loga tudo no journal compartilhado.
+    try:
+        append_journal(text, str(response), project_slug=slug)
+    except Exception:
+        pass
     return str(response)

@@ -3,6 +3,7 @@ name: Luap Studio
 slug: luap-studio
 type: project
 status: active
+updated: 2026-07-20
 ---
 
 # Luap Studio

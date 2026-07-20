@@ -3,6 +3,7 @@ name: Pollar Agência
 slug: pollar
 type: project
 status: active
+updated: 2026-07-20
 ---
 
 # Pollar Agência

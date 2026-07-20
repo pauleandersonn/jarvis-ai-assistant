@@ -2,6 +2,7 @@
 name: JARVIS Memory Index
 description: Persistent memory of projects, decisions and pending tasks for Pauleanderson
 type: project
+updated: 2026-07-20
 ---
 
 # JARVIS — Memória Persistente
@@ -28,6 +29,7 @@ Cada projeto tem um arquivo próprio em `./Projects/<slug>.md`.
 ## Índice de seções
 
 - `jarvis-persona.md` — constituição cognitiva do JARVIS (prompt expandido, raciocínio, especialidade, limites)
+- `integrations.md` — serviços externos conectados (Gmail, Calendar, OAuth tokens, endpoints)
 - `Projects/` — um arquivo `.md` por projeto (objetivo, tarefas, decisões, próximos passos)
 - `decisions.md` — log de decisões importantes (cross-project)
 - `tasks.md` — tarefas pendentes globais
@@ -41,4 +43,4 @@ Cada projeto tem um arquivo próprio em `./Projects/<slug>.md`.
 5. **Antes de responder**, JARVIS consulta `jarvis-persona.md` para alinhar tom, raciocínio e formato.
 
 ## Última atualização
-2026-07-16 — Estrutura inicial criada.
+2026-07-20 — Gmail + Google Calendar integrados (integrations.md criado).

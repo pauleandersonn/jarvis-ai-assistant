@@ -3,6 +3,7 @@ name: Mídia Criativa do Reino
 slug: midia-criativa-do-reino
 type: project
 status: active
+updated: 2026-07-20
 ---
 
 # Mídia Criativa do Reino

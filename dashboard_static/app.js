@@ -569,6 +569,23 @@ async function ttsSpeakViaBackend(text) {
   }
 
   return new Promise((resolve) => {
+    // GUARD: se ja tem audio tocando, mata ele antes de criar outro.
+    // Sem isso, cada mensagem dispara um novo Audio que toca POR CIMA do
+    // anterior — duas vozes sobrepostas, sem sincronismo.
+    if (state.currentAudio) {
+      try {
+        state.currentAudio.pause();
+        state.currentAudio.src = ""; // força parada total
+      } catch (e) { /* noop */ }
+      state.currentAudio = null;
+    }
+    // Tambem mata qualquer fala do speechSynthesis que ainda esteja rolando.
+    try {
+      if (window.speechSynthesis && window.speechSynthesis.speaking) {
+        window.speechSynthesis.cancel();
+      }
+    } catch (e) { /* noop */ }
+
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     audio.volume = 1.0;
@@ -630,6 +647,11 @@ async function safeReadJson(resp) {
 
 async function speakArbitrary(text) {
   if (!text) return;
+  // DUPLA PROTECAO: mata qualquer audio em curso antes de iniciar novo.
+  // Chamado em DOIS lugares (aqui e dentro de ttsSpeakViaBackend) porque
+  // speakArbitrary pode ser invocado sem passar pelo guard interno
+  // (ex: boot greeting, speak() manual da UI).
+  interruptSpeech();
   setState("speaking");
 
   const result = await ttsSpeak(text);
@@ -730,10 +752,14 @@ async function waitForNewAiAndSpeak(before, maxMs = 30000, intervalMs = 700) {
   while (Date.now() - start < maxMs) {
     await new Promise(r => setTimeout(r, intervalMs));
     const now = await fetchChatSnapshot();
-    // Critério: nova AI line diferente da anterior.
-    if (now.lastAi && now.lastAi !== before.lastAi) {
+    // Critério: nova AI line diferente OU número de mensagens aumentou
+    // (a última pode ser mensagem do usuário recém-enviada sem ai ainda;
+    // se a contagem subiu e a primeira posição mudou, a AI chegou).
+    const newAiArrived = now.lastAi && now.lastAi !== before.lastAi;
+    const countGrew = now.count > before.count;
+    if (newAiArrived || countGrew) {
       await refreshChat();
-      const spoken = now.lastAi.split("\n\nFontes:\n")[0].trim();
+      const spoken = (now.lastAi || "").split("\n\nFontes:\n")[0].trim();
       if (!spoken) {
         setState("idle");
         return;
@@ -741,13 +767,11 @@ async function waitForNewAiAndSpeak(before, maxMs = 30000, intervalMs = 700) {
       state.lastAnswer = spoken;
       setState("speaking");
       try {
-        const { blob, duration } = await fetchTtsBlob(spoken);
-        const fallback = Math.min(Math.max(spoken.split(/\s+/).length / 2.5 + 1, 2), 40);
-        const seconds = duration > 0 ? duration : fallback;
-        playBlob(blob, seconds, () => {
-          setState("idle");
-          if (state.continuousMode) startMic();
-        });
+        // CAMINHO PRIMÁRIO: ttsSpeakViaBackend (SAPI5 server-side + HTMLAudio).
+        // Antes duplicava lógica aqui dentro — consolidado em speakArbitrary().
+        await speakArbitrary(spoken);
+        setState("idle");
+        if (state.continuousMode) startMic();
       } catch (e) {
         console.error("speak during chat:", e);
         setState("idle");
@@ -776,6 +800,69 @@ async function checkWeather() {
       result.textContent = last.ai;
     }
   }, 4000);
+}
+
+// ───────── Hermes bridge (Modo 3: mente compartilhada) ─────────
+async function askHermes() {
+  const text = document.getElementById("hermes-input").value.trim();
+  const out = document.getElementById("hermes-context");
+  const statsEl = document.getElementById("hermes-stats");
+  if (!text) {
+    out.textContent = "Digite um termo (ex: jarvis, indica-ai, meta-ads).";
+    return;
+  }
+  out.textContent = "Consultando Hermes…";
+  try {
+    const r = await fetch("/api/hermes/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    const j = await r.json();
+    if (j.status !== "ok") {
+      out.textContent = "ERRO: " + (j.detail || "desconhecido");
+      return;
+    }
+    out.textContent = j.context || "(vazio)";
+    if (j.journal) {
+      const s = j.journal;
+      statsEl.textContent = s.exists
+        ? `journal: ${s.entries} entradas · ${s.size_bytes} bytes · ${s.path}`
+        : "journal: (vazio)";
+    }
+    refreshHermesJournal();
+  } catch (err) {
+    out.textContent = "ERRO: " + err.message;
+  }
+}
+
+async function refreshHermesIndex() {
+  const statsEl = document.getElementById("hermes-stats");
+  statsEl.textContent = "Re-sincronizando índice de projetos…";
+  try {
+    const r = await fetch("/api/hermes/refresh", { method: "POST" });
+    const j = await r.json();
+    if (j.status === "ok") {
+      statsEl.textContent =
+        `Índice regenerado: ${j.projects} projetos → ${j.index_path}`;
+    } else {
+      statsEl.textContent = "ERRO: " + (j.detail || "desconhecido");
+    }
+  } catch (err) {
+    statsEl.textContent = "ERRO: " + err.message;
+  }
+}
+
+async function refreshHermesJournal() {
+  const el = document.getElementById("hermes-journal");
+  if (!el) return;
+  try {
+    const r = await fetch("/api/hermes/journal?last_n=30");
+    const j = await r.json();
+    el.textContent = j.entries || "(journal vazio)";
+  } catch (err) {
+    el.textContent = "ERRO: " + err.message;
+  }
 }
 
 // ───────── Research ─────────
@@ -1138,6 +1225,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "weather-input": () => checkWeather(),
     "research-input": () => research(),
     "image-input": () => generateImage(),
+    "hermes-input": () => askHermes(),
   };
   for (const [id, fn] of Object.entries(handlers)) {
     const el = document.getElementById(id);
@@ -1216,3 +1304,115 @@ async function bootGreeting() {
   }
 }
 bootGreeting();
+
+// ───────── Voice confirmation polling (MCP server bridge) ─────────
+// Polls /api/voice-confirm/pending every 1.2s. When the MCP server
+// wants to do a write action (send email, create event, etc.), it
+// drops a JSON file; this code picks it up, speaks the prompt via
+// TTS, listens for the user's yes/no, and POSTs the answer back.
+let voiceConfirmPollHandle = null;
+let voiceConfirmBusy = false;
+
+async function pollVoiceConfirm() {
+  if (voiceConfirmBusy) return;  // already processing one
+  try {
+    const r = await fetch("/api/voice-confirm/pending");
+    const j = await r.json();
+    if (!j.ok || !j.pending || j.pending.length === 0) return;
+    // Process the oldest one
+    const req = j.pending[0];
+    voiceConfirmBusy = true;
+    try {
+      const ok = await handleVoiceConfirm(req);
+      await fetch("/api/voice-confirm/respond", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          request_id: req.request_id,
+          status: ok ? "approved" : "denied",
+          reason: ok ? "" : "user_denied",
+        }),
+      });
+    } finally {
+      voiceConfirmBusy = false;
+    }
+  } catch (e) {
+    if (window.JARVIS_DEBUG) console.warn("[voice-confirm] poll erro:", e);
+  }
+}
+
+function handleVoiceConfirm(req) {
+  return new Promise((resolve) => {
+    // 1) Speak the prompt
+    const prompt = req.voice_prompt || `Confirmar ${req.intent}?`;
+    const speakPromise = speakArbitrary(prompt + " Diga sim ou não.");
+
+    // 2) Setup one-shot recognition
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      speakPromise.catch(() => {});
+      // No browser support - auto-deny
+      resolve(false);
+      return;
+    }
+    const recog = new SR();
+    recog.lang = "pt-BR";
+    recog.interimResults = false;
+    recog.maxAlternatives = 1;
+    let resolved = false;
+    const finish = (ok) => {
+      if (resolved) return;
+      resolved = true;
+      try { recog.stop(); } catch (e) { /* noop */ }
+      resolve(ok);
+    };
+    recog.onresult = (event) => {
+      const transcript = (event.results[0][0].transcript || "").toLowerCase();
+      if (window.JARVIS_DEBUG) console.log("[voice-confirm] heard:", transcript);
+      // Accept variations of yes/no
+      const yesWords = ["sim", "confirmo", "confirma", "autoriza", "pode", "ok", "isso", "claro", "manda"];
+      const noWords = ["não", "nao", "cancela", "cancelar", "para", "negativo", "deixa"];
+      const ok = yesWords.some(w => transcript.includes(w)) &&
+                 !noWords.some(w => transcript.includes(w));
+      finish(ok);
+    };
+    recog.onerror = (e) => {
+      if (window.JARVIS_DEBUG) console.warn("[voice-confirm] recog erro:", e.error);
+      finish(false);  // deny on error
+    };
+    recog.onend = () => {
+      if (!resolved) finish(false);  // timeout = deny
+    };
+    // After TTS finishes, start mic
+    speakPromise.then(() => {
+      try {
+        recog.start();
+        // Hard timeout 12s (TTS já falou, deixa o usuário responder)
+        setTimeout(() => finish(false), 12000);
+      } catch (e) {
+        if (window.JARVIS_DEBUG) console.warn("[voice-confirm] start erro:", e);
+        finish(false);
+      }
+    }).catch(() => finish(false));
+  });
+}
+
+function startVoiceConfirmPolling() {
+  if (voiceConfirmPollHandle) return;
+  voiceConfirmPollHandle = setInterval(pollVoiceConfirm, 1200);
+  if (window.JARVIS_DEBUG) console.log("[voice-confirm] polling iniciado");
+}
+
+function stopVoiceConfirmPolling() {
+  if (voiceConfirmPollHandle) {
+    clearInterval(voiceConfirmPollHandle);
+    voiceConfirmPollHandle = null;
+  }
+}
+
+// Start polling when DOM is ready
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", startVoiceConfirmPolling);
+} else {
+  startVoiceConfirmPolling();
+}

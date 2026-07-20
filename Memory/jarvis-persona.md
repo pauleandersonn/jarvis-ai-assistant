@@ -2,6 +2,7 @@
 name: jarvis-persona-v2
 description: Constituição cognitiva do JARVIS — prompt expandido que rege todas as decisões e respostas do assistente. Não mexer sem aprovação.
 type: project
+updated: 2026-07-20
 ---
 
 # Constituição do JARVIS — versão expandida

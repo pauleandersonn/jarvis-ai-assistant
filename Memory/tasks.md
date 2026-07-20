@@ -2,6 +2,7 @@
 name: Tarefas Globais Pendentes
 description: Tarefas que não pertencem a um projeto específico
 type: project
+updated: 2026-07-20
 ---
 
 # Tarefas Globais

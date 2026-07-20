@@ -159,7 +159,7 @@
       </div>
 
       <input type="text" id="ask-input" class="voice-input"
-             placeholder="Digite aqui para falar com o JARVIS…" />
+             placeholder="Digite aqui para falar com o JARVIS… pressione Enter para enviar" />
 
       <button class="primary-btn enable-audio-btn" id="enable-audio-btn"
               onclick="enableAudio()" title="Ativar audio (1a vez desbloqueia o som do navegador)">
@@ -167,7 +167,12 @@
         <span id="enable-audio-label">Ativar audio</span>
       </button>
 
-      <button class="mic-btn" id="mic-btn" onclick="toggleMic()" title="Falar">
+      <button class="send-btn" id="send-btn" onclick="ask()" title="Enviar mensagem (Enter)">
+        <span class="material-icons">send</span>
+        <span>Enviar</span>
+      </button>
+
+      <button class="mic-btn" id="mic-btn" onclick="toggleMic()" title="Falar por voz">
         <span class="mic-icon" id="mic-icon">⌬</span>
       </button>
 
@@ -268,6 +273,7 @@
     <button class="drawer-tab" data-tab="image">Imagem</button>
     <button class="drawer-tab" data-tab="controls">Controles</button>
     <button class="drawer-tab" data-tab="logs">Logs</button>
+    <button class="drawer-tab" data-tab="hermes">⚷ Hermes</button>
   </div>
 
   <!-- Chat tab -->
@@ -360,6 +366,26 @@
   <div class="drawer-panel" id="panel-logs">
     <div class="panel-header"><h3>Logs ao vivo</h3></div>
     <pre id="logs" class="logs"></pre>
+  </div>
+
+  <!-- Hermes tab (Modo 3: bridge para a mente do Hermes) -->
+  <div class="drawer-panel" id="panel-hermes">
+    <div class="panel-header"><h3>⚷ Hermes — Memória Compartilhada</h3></div>
+    <p class="panel-hint">
+      JARVIS ↔ Hermes: <strong>memória sincronizada</strong>. Toda chamada ao JARVIS
+      registra no <code>jarvis_journal.md</code> e o contexto do Hermes é injetado no prompt.
+    </p>
+    <div class="form-row">
+      <input type="text" id="hermes-input" class="voice-input"
+             placeholder="Pergunte algo sobre a memória (ex: jarvis-ai-assistant, projetos ativos, tarefas pendentes)..." />
+      <button class="primary-btn" onclick="askHermes()">Consultar</button>
+      <button class="primary-btn" onclick="refreshHermesIndex()">Re-sincronizar</button>
+    </div>
+    <div id="hermes-stats" class="hermes-stats">carregando…</div>
+    <div class="panel-subheader"><h4>Resposta</h4></div>
+    <pre id="hermes-context" class="logs"></pre>
+    <div class="panel-subheader"><h4>Journal (últimas 30 entradas)</h4></div>
+    <pre id="hermes-journal" class="logs"></pre>
   </div>
 </section>
 

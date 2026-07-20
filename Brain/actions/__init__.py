@@ -29,6 +29,34 @@ except Exception as e:
     HAVE_REMINDER = False
     HAVE_OPENAPP = False
 
+# Email + Calendar (Google Workspace via skill google-workspace).
+# Nomes `gmail`/`gcalendar` evitam colisao com stdlib `email` e `calendar`.
+try:
+    import gmail as _gmail_mod
+    import gcalendar as _gcal_mod
+    HAVE_EMAIL = True
+    HAVE_CALENDAR = True
+except Exception as e:
+    LOG.warning("Email/Calendar actions import failed: %s", e)
+    HAVE_EMAIL = False
+    HAVE_CALENDAR = False
+
+
+# Re-export helpers from gmail / gcalendar modules so dashboard.py can call them
+# as `from Brain.actions import search_emails, send_email, ...`.
+if HAVE_EMAIL:
+    search_emails = _gmail_mod.search_emails
+    get_email = _gmail_mod.get_email
+    send_email = _gmail_mod.send_email
+    summarize_inbox = _gmail_mod.summarize_inbox
+    summarize_email = _gmail_mod.summarize_email
+
+if HAVE_CALENDAR:
+    list_events = _gcal_mod.list_events
+    create_event = _gcal_mod.create_event
+    delete_event = _gcal_mod.delete_event
+    summarize_agenda = _gcal_mod.summarize_agenda
+
 
 # ───────────── Reminders ─────────────
 

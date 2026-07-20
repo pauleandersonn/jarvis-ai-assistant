@@ -26,6 +26,17 @@ chat_hystory.txt
 nohup.out
 *.pid
 
+# TTS generated audio (regenerated on demand)
+TextToSpeech/tmp_audio/
+
+# OAuth credentials / local secrets (NEVER commit)
+google_token.json
+google_client_secret.json
+*.pem
+*.key
+service-account-*.json
+*service_account*.json
+
 # Dashboard local artifacts
 dashboard.log
 dashboard.err.log

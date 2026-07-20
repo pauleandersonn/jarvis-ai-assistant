@@ -3,6 +3,7 @@ name: We Love Memory
 slug: we-love-memory
 type: project
 status: active
+updated: 2026-07-20
 ---
 
 # We Love Memory

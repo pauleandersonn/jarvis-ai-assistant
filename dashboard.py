@@ -16,7 +16,7 @@ import threading
 import time
 from datetime import datetime
 
-from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -351,7 +351,9 @@ def chat_history(limit: int = 50) -> JSONResponse:
         messages = []
         lines = content.splitlines()
         i = 0
-        while i < len(lines) and len(messages) < limit * 2:
+        # IMPORTANTE: parsear TODAS as mensagens do arquivo, depois pegar as `limit` últimas.
+        # O loop antigo parava em `limit * 2`, retornando mensagens do INÍCIO em vez do fim.
+        while i < len(lines):
             if lines[i].startswith("User:"):
                 u = lines[i][5:].strip()
                 a = ""
@@ -587,6 +589,167 @@ def api_open_app(payload: OpenAppPayload) -> JSONResponse:
     return JSONResponse(result, status_code=status)
 
 
+# ---------- Email (Gmail) ----------
+class EmailSearchPayload(BaseModel):
+    query: str = "is:unread"
+    max_results: int = 5
+
+
+class EmailSendPayload(BaseModel):
+    to: str
+    subject: str
+    body: str
+    html: bool = False
+    from_alias: str | None = None
+
+
+@app.post("/api/email/search", include_in_schema=False)
+def api_email_search(payload: EmailSearchPayload) -> JSONResponse:
+    """Busca emails por query Gmail (is:unread, from:X, newer_than:Nd)."""
+    from Brain.actions import search_emails
+    result = search_emails(query=payload.query, max_results=payload.max_results)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 500)
+
+
+@app.post("/api/email/send", include_in_schema=False)
+def api_email_send(payload: EmailSendPayload) -> JSONResponse:
+    """Envia email. USAR COM CUIDADO — envia de verdade."""
+    from Brain.actions import send_email
+    result = send_email(
+        to=payload.to,
+        subject=payload.subject,
+        body=payload.body,
+        html=payload.html,
+        from_alias=payload.from_alias,
+    )
+    return JSONResponse(result, status_code=200 if result.get("ok") else 400)
+
+
+@app.post("/api/email/inbox-summary", include_in_schema=False)
+def api_email_inbox_summary(payload: EmailSearchPayload) -> JSONResponse:
+    """Retorna string TTS-friendly com os N emails mais recentes (pra o JARVIS falar)."""
+    from Brain.actions import summarize_inbox
+    summary = summarize_inbox(query=payload.query, max_results=payload.max_results)
+    return JSONResponse({"ok": True, "summary": summary})
+
+
+# ---------- Calendar (Google Calendar) ----------
+class CalendarListPayload(BaseModel):
+    start: str | None = None
+    end: str | None = None
+    max_results: int = 10
+
+
+class CalendarCreatePayload(BaseModel):
+    summary: str
+    start_iso: str
+    end_iso: str
+    location: str | None = None
+    description: str | None = None
+    attendees: list[str] | None = None
+
+
+@app.post("/api/calendar/list", include_in_schema=False)
+def api_calendar_list(payload: CalendarListPayload) -> JSONResponse:
+    """Lista eventos entre start e end (ISO 8601). Default: proximos 7 dias."""
+    from Brain.actions import list_events
+    result = list_events(
+        start=payload.start, end=payload.end, max_results=payload.max_results
+    )
+    return JSONResponse(result, status_code=200 if result.get("ok") else 500)
+
+
+@app.post("/api/calendar/create", include_in_schema=False)
+def api_calendar_create(payload: CalendarCreatePayload) -> JSONResponse:
+    """Cria evento. CUIDADO: vai pro Calendar oficial — confirma com usuario antes."""
+    from Brain.actions import create_event
+    result = create_event(
+        summary=payload.summary,
+        start_iso=payload.start_iso,
+        end_iso=payload.end_iso,
+        location=payload.location,
+        description=payload.description,
+        attendees=payload.attendees,
+    )
+    return JSONResponse(result, status_code=200 if result.get("ok") else 400)
+
+
+class CalendarDeletePayload(BaseModel):
+    event_id: str
+
+
+@app.post("/api/calendar/delete", include_in_schema=False)
+def api_calendar_delete(payload: CalendarDeletePayload) -> JSONResponse:
+    """Deleta evento por ID. CUIDADO — vai pra lixeira do Google Calendar."""
+    from Brain.actions import delete_event
+    result = delete_event(payload.event_id)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 400)
+
+
+@app.post("/api/calendar/agenda-summary", include_in_schema=False)
+def api_calendar_agenda_summary(payload: CalendarListPayload) -> JSONResponse:
+    """Retorna string TTS-friendly com a agenda do periodo."""
+    from Brain.actions import summarize_agenda
+    summary = summarize_agenda(
+        start=payload.start, end=payload.end, max_events=payload.max_results
+    )
+    return JSONResponse({"ok": True, "summary": summary})
+
+
+# ---------- Voice confirmation (MCP server bridge) ----------
+class VoiceConfirmRespondPayload(BaseModel):
+    request_id: str
+    status: str  # 'approved' ou 'denied'
+    reason: str = ""
+
+
+@app.get("/api/voice-confirm/pending", include_in_schema=False)
+def api_voice_confirm_pending() -> JSONResponse:
+    """Lista pending confirm requests do MCP server. Dashboard faz polling 1s."""
+    from Brain.voice_confirm import list_pending
+    pending = list_pending()
+    return JSONResponse({"ok": True, "pending": pending})
+
+
+@app.post("/api/voice-confirm/respond", include_in_schema=False)
+def api_voice_confirm_respond(payload: VoiceConfirmRespondPayload) -> JSONResponse:
+    """Dashboard POSTa a resposta do usuario apos ouvir pelo mic."""
+    from Brain.voice_confirm import post_response
+    r = post_response(payload.request_id, payload.status, payload.reason)
+    return JSONResponse(r, status_code=200 if r.get("ok") else 400)
+
+
+# ---------- MCP server status ----------
+@app.get("/api/mcp/status", include_in_schema=False)
+def api_mcp_status() -> JSONResponse:
+    """Reporta status do MCP server (se ta rodando, tools disponiveis)."""
+    import socket as _socket
+    port = 8789
+    sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    sock.settimeout(0.5)
+    try:
+        sock.connect(("127.0.0.1", port))
+        running = True
+    except Exception:
+        running = False
+    finally:
+        sock.close()
+    return JSONResponse({
+        "running": running,
+        "port": port,
+        "tools_count": 10,
+        "read_tools": [
+            "jarvis_list_emails", "jarvis_read_email",
+            "jarvis_list_calendar", "jarvis_ask_brain",
+            "jarvis_read_hermes_context",
+        ],
+        "write_tools": [
+            "jarvis_send_email", "jarvis_create_event", "jarvis_delete_event",
+            "jarvis_set_reminder", "jarvis_open_app",
+        ],
+    })
+
+
 # ---------- Web search ----------
 class TextPayload(BaseModel):
     text: str
@@ -635,79 +798,112 @@ def _append_log(line: str) -> None:
 
 
 @app.post("/api/speak")
-async def api_speak(payload: TextPayload):
-    """Gera WAV via SAPI5 e devolve os bytes para o navegador.
+async def api_speak(request: Request):
+    """Gera audio (WAV via SAPI5 OU MP3 via Edge TTS) e devolve os bytes.
 
     Contrato:
-      Request: JSON {"text": str}
-      Response: audio/wav (bytes) com headers Cache-Control: no-store e
-                Content-Disposition: inline; filename="jarvis_<ts>.wav"
+      Request: JSON {"text": str, "engine": "sapi5"|"edge" (default="edge")}
+      Response: audio/wav OU audio/mpeg bytes
 
-    NAO reproduz audio no servidor. Quem toca e o navegador via HTMLAudioElement.
-    O frontend converte o Response em Blob, cria URL.createObjectURL e da play.
+    Engine padrao: "edge" (pt-BR-AntonioNeural — voz Jarvis-like grave/pausada).
+    Pra voltar a SAPI5 (Maria Desktop), envie "engine":"sapi5".
 
-    Valido / estados:
-      200 + WAV         — fala gerada
-      400 + JSON        — texto vazio / filtrado
-      503 + JSON        — SAPI5 nao disponivel (som em ambiente sem COM)
+    Validacoes:
+      200 + bytes       — fala gerada
+      400 + JSON        — texto vazio
+      503 + JSON        — engine indisponivel
     """
+    body = await request.json()
+    raw = (body.get("text") or "").strip()
+    engine = (body.get("engine") or "edge").lower()
+
+    if not raw:
+        return JSONResponse(
+            {"status": "empty", "reason": "text vazio"},
+            status_code=400,
+        )
+
+    # ── Edge TTS (default — voz Jarvis-like) ──────────────────────
+    if engine == "edge":
+        try:
+            from TextToSpeech.Edge_TTS import speak_to_file as edge_speak
+            # speak_to_file e async (detecta loop via asyncio.get_running_loop).
+            mp3_path = await edge_speak(raw)
+            with open(mp3_path, "rb") as fh:
+                mp3_bytes = fh.read()
+            # Calcula duracao estimada (MP3 ~ 16kbps pra voz)
+            duration = len(mp3_bytes) / 2000.0
+            headers = {
+                "Cache-Control": "no-store",
+                "X-Jarvis-Engine": "edge-tts",
+                "X-Jarvis-Voice": os.environ.get("JARVIS_EDGE_VOICE", "pt-BR-AntonioNeural"),
+                "X-Jarvis-Duration": f"{duration:.2f}",
+                "Content-Disposition": 'inline; filename="jarvis_edge.mp3"',
+            }
+            return Response(
+                content=mp3_bytes,
+                media_type="audio/mpeg",
+                headers=headers,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _append_log(f"ERROR: edge-tts falhou: {exc}")
+            return JSONResponse(
+                {"status": "error", "reason": "edge-tts indisponivel", "detail": str(exc)},
+                status_code=503,
+            )
+
+    # ── SAPI5 fallback (voz Maria Desktop PT-BR) ──────────────────
     from TextToSpeech.Fast_DF_TTS import (
-        speak_to_file,
+        speak_to_file as sapi_speak,
         _clean_for_speech,
         _has_meta_content,
         _smart_truncate,
     )
 
-    raw = payload.text or ""
     clean = _clean_for_speech(raw)
     if not clean:
         return JSONResponse(
             {"status": "empty", "reason": "text vazio apos limpeza"},
             status_code=400,
         )
-
-    # Bloqueia meta-fala do LLM (substituido por mensagem amigavel)
     if _has_meta_content(clean):
         _append_log(f"WARN: meta-fala bloqueada: {clean[:80]!r}")
         clean = "Mensagem bloqueada pelo filtro de seguranca."
-
-    # Encurta respostas muito longas para nao gerar WAVs gigantes
     text = _smart_truncate(clean, max_chars=600)
 
-    # Gera o WAV num arquivo temporario em disco (SAPI5 exige Write Stream).
     try:
-        wav_path = speak_to_file(text)
+        wav_path = sapi_speak(text)
     except Exception as exc:  # noqa: BLE001
         _append_log(f"ERROR: speak_to_file falhou: {exc}")
         return JSONResponse(
-            {
-                "status": "error",
-                "reason": "sapi5 indisponivel",
-                "detail": str(exc),
-            },
+            {"status": "error", "reason": "sapi5 indisponivel", "detail": str(exc)},
             status_code=503,
         )
 
-    # Le o arquivo como bytes
-    try:
-        with open(wav_path, "rb") as fh:
-            wav_bytes = fh.read()
-    except OSError as exc:
-        _append_log(f"ERROR: leitura do WAV falhou: {exc}")
-        return JSONResponse(
-            {"status": "error", "reason": "arquivo nao legivel", "detail": str(exc)},
-            status_code=500,
-        )
-
-    dur = _wav_dur(wav_bytes)
-    _append_log(
-        f"OK: speak wav -> {len(wav_bytes)} bytes, {dur:.2f}s, {len(text)} chars"
+    # Returns: WAV file
+    from pathlib import Path
+    wav_bytes = Path(wav_path).read_bytes()
+    duration = len(wav_bytes) / 32000.0
+    headers = {
+        "Cache-Control": "no-store",
+        "X-Jarvis-Engine": "sapi5",
+        "X-Jarvis-Voice": "Microsoft Maria Desktop",
+        "X-Jarvis-Duration": f"{duration:.2f}",
+        "Content-Disposition": 'inline; filename="jarvis_sapi5.wav"',
+    }
+    return Response(
+        content=wav_bytes,
+        media_type="audio/wav",
+        headers=headers,
     )
 
-    # Devolve o WAV cru. O navegador instancia Audio(blob) e toca via JS.
-    # Cache-Control: no-store evita que o browser reuse audio antigo.
-    # Content-Disposition: inline permite tocar sem download prompt.
+    # SAPI5 fallback: le o WAV do disco e devolve.
+    from pathlib import Path
+    wav_bytes = Path(wav_path).read_bytes()
     fname = os.path.basename(wav_path)
+    _append_log(
+        f"OK: speak wav -> {len(wav_bytes)} bytes, sapi5 fallback"
+    )
     return Response(
         content=wav_bytes,
         media_type="audio/wav",
@@ -715,8 +911,7 @@ async def api_speak(payload: TextPayload):
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Content-Disposition": f'inline; filename="{fname}"',
             "X-Jarvis-Engine": "sapi5",
-            "X-Jarvis-Duration": f"{dur:.2f}",
-            "X-Jarvis-Chars": str(len(text)),
+            "X-Jarvis-Duration": f"{duration:.2f}",
             "Content-Length": str(len(wav_bytes)),
         },
     )
@@ -787,6 +982,71 @@ def api_ask(payload: TextPayload) -> dict:
     """Send `text` to the brain."""
     from Brain.brain import Main_Brain
     return _safe_run(Main_Brain, payload.text)
+
+
+@app.post("/api/hermes/ask")
+def api_hermes_ask(payload: TextPayload) -> dict:
+    """Ask Hermes a quick question. Returns the Hermes context block verbatim.
+
+    Modo 3 (Modo 3 do plano 'conectar JARVIS a mente do Hermes'): manual,
+    on-demand. Nao chama nenhum LLM externo — apenas devolve o contexto
+    que JÁ ESTARIA injetado no prompt do JARVIS (memoria + projects index).
+
+    Use cases reais:
+      - "que projetos o usuario tem ativos?" -> Projects Index
+      - "qual a persona do JARVIS?" -> memory.md
+      - "quais tarefas estao pendentes hoje?" -> tasks
+
+    Resposta rapida (sem custo de IA) — sempre < 200ms.
+    """
+    from Brain.hermes_bridge import get_hermes_context, journal_stats
+    try:
+        # force_refresh=True pra pegar snapshot mais recente do disco.
+        ctx = get_hermes_context(jarvis_projects=None, force_refresh=True)
+        if payload.text and payload.text.strip():
+            # Filtra pelo termo: devolve so linhas que mencionam o termo.
+            terms = [t.lower() for t in payload.text.split() if len(t) > 3]
+            if terms:
+                filtered = "\n".join(
+                    line for line in ctx.splitlines()
+                    if any(term in line.lower() for term in terms)
+                )
+                if filtered.strip():
+                    ctx = filtered
+        return {
+            "status": "ok",
+            "context": ctx,
+            "journal": journal_stats(),
+        }
+    except Exception as exc:
+        return {"status": "error", "detail": str(exc)}
+
+
+@app.get("/api/hermes/journal")
+def api_hermes_journal(last_n: int = 30) -> dict:
+    """Return the last `last_n` entries from jarvis_journal.md."""
+    from Brain.hermes_bridge import read_journal, journal_stats
+    try:
+        return {
+            "status": "ok",
+            "entries": read_journal(last_n=last_n),
+            "stats": journal_stats(),
+        }
+    except Exception as exc:
+        return {"status": "error", "detail": str(exc)}
+
+
+@app.post("/api/hermes/refresh")
+def api_hermes_refresh() -> dict:
+    """Force-rebuild the JARVIS projects index in ~/.hermes/memories/."""
+    from Brain.hermes_bridge import sync_projects_index, invalidate_cache
+    try:
+        from Brain.memory import list_projects
+        path = sync_projects_index(list_projects())
+        invalidate_cache()
+        return {"status": "ok", "index_path": path, "projects": len(list_projects())}
+    except Exception as exc:
+        return {"status": "error", "detail": str(exc)}
 
 
 @app.post("/api/weather")
