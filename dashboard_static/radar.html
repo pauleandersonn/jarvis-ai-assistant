@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JARVIS Radar — Visual Newsroom</title>
+<style>
+:root{
+  --bg:#0a0e1a;--bg-2:#0f1729;--bg-3:#1a2233;
+  --fg:#e5e7eb;--muted:#94a3b8;--dim:#64748b;
+  --green:#10b981;--red:#ef4444;--amber:#f59e0b;--blue:#3b82f6;
+  --violet:#8b5cf6;--pink:#ec4899;--cyan:#06b6d4;--teal:#14b8a6;
+  --border:rgba(255,255,255,0.08);--border-hi:rgba(255,255,255,0.15);
+  --card:rgba(15,23,42,0.7);
+  --accent-cyan:#22d3ee;
+  --shadow:0 4px 16px 0 rgba(0,0,0,0.45);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--fg);font-family:'Inter','SF Pro Display',system-ui,-apple-system,sans-serif;height:100vh;overflow:hidden;font-size:12px;line-height:1.4}
+
+/* ============== LAYOUT (sidebar + main) ============== */
+.app{display:grid;grid-template-columns:48px 1fr;height:100vh;width:100vw}
+
+/* SIDEBAR (vertical icons) */
+.sidebar{background:rgba(0,0,0,0.35);border-right:1px solid var(--border);padding:6px 0;display:flex;flex-direction:column;align-items:center;gap:6px;overflow-y:auto}
+.sb-logo{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,var(--cyan),var(--violet));display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:900;color:#000;margin-bottom:10px}
+.sb-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;cursor:pointer;color:var(--muted);transition:all 0.15s;position:relative}
+.sb-icon:hover{background:rgba(255,255,255,0.07);color:#fff}
+.sb-icon.active{background:rgba(34,211,238,0.18);color:var(--accent-cyan)}
+.sb-icon.active::before{content:'';position:absolute;left:-6px;width:3px;height:18px;background:var(--accent-cyan);border-radius:0 2px 2px 0}
+.sb-icon[data-pane].has-data::after{content:'';position:absolute;top:4px;right:4px;width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green)}
+.sb-spacer{flex:1;min-height:20px}
+
+/* MAIN */
+.main{display:grid;grid-template-rows:auto 1fr;overflow:hidden}
+
+/* TOPBAR */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:linear-gradient(180deg,rgba(15,23,42,0.85),rgba(15,23,42,0.4));border-bottom:1px solid var(--border);backdrop-filter:blur(8px)}
+.topbar h1{font-size:13px;font-weight:700;color:#fff;display:flex;align-items:center;gap:8px;letter-spacing:0.3px}
+.topbar h1 .badge{font-size:9px;background:var(--cyan);color:#000;padding:1px 6px;border-radius:6px;font-weight:800}
+.topbar-right{display:flex;align-items:center;gap:10px}
+.clock{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;font-weight:600;letter-spacing:0.5px}
+.live-pill{display:inline-flex;align-items:center;gap:4px;font-size:9px;font-weight:800;color:#000;background:var(--green);padding:2px 7px;border-radius:999px;text-transform:uppercase;letter-spacing:0.5px}
+.live-pill .dot{width:5px;height:5px;background:#000;border-radius:50%;animation:pulse 1.4s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(1.2)}}
+
+/* CONTENT */
+.content{padding:10px;overflow-y:auto;overflow-x:hidden}
+
+/* VIEW TABS (single-pane mode) */
+.view{display:none}
+.view.active{display:block}
+
+/* GRID 3 colunas */
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+@media (max-width:900px){.grid-3{grid-template-columns:1fr}}
+
+/* KPI row denso */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
+@media (max-width:1100px){.kpis{grid-template-columns:repeat(2,1fr)}}
+.kpi{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 10px;backdrop-filter:blur(4px)}
+.kpi .label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.7px;margin-bottom:2px;font-weight:600}
+.kpi .value{font-size:18px;font-weight:800;color:#fff;line-height:1.1;font-variant-numeric:tabular-nums}
+.kpi .sub{font-size:9px;color:var(--dim);margin-top:2px;text-transform:uppercase;letter-spacing:0.3px}
+.kpi.trade{border-left:2px solid var(--green)}
+.kpi.trade .value{color:var(--green)}
+.kpi.tel{border-left:2px solid var(--cyan)}
+.kpi.tel .value{color:var(--cyan)}
+.kpi.church{border-left:2px solid var(--violet)}
+.kpi.church .value{color:var(--violet)}
+.kpi.alert{border-left:2px solid var(--red)}
+.kpi.alert .value{color:var(--red)}
+
+/* CARD */
+.col{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;min-height:280px}
+.col-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(255,255,255,0.04);border-bottom:1px solid var(--border)}
+.col-header h2{font-size:11px;font-weight:800;color:#fff;text-transform:uppercase;letter-spacing:0.7px;display:flex;align-items:center;gap:6px}
+.col-header h2 .ico{font-size:14px}
+.col-header .count{font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.3px}
+.col-body{padding:6px;overflow-y:auto;flex:1}
+
+/* ITEMS (densos) */
+.item{background:rgba(255,255,255,0.025);border:1px solid var(--border);border-radius:6px;padding:6px 8px;margin-bottom:4px;transition:all 0.15s;cursor:pointer}
+.item:hover{background:rgba(34,211,238,0.05);border-color:var(--border-hi);transform:translateX(1px)}
+.item.hot{border-left:2px solid var(--red);animation:hotGlow 2s infinite}
+@keyframes hotGlow{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}50%{box-shadow:0 0 8px 0 rgba(239,68,68,0.25)}}
+.item.alta{border-left:2px solid var(--red)}
+.item.media{border-left:2px solid var(--amber)}
+.item.baixa{border-left:2px solid var(--dim)}
+.item.line{display:flex;align-items:center;gap:6px;font-size:11px}
+.item .sym{font-family:'JetBrains Mono','Menlo',monospace;font-weight:700;color:#fff;flex-shrink:0;min-width:80px;font-size:11px}
+.item .ts{font-size:10px;color:var(--dim);margin-left:auto;flex-shrink:0;font-variant-numeric:tabular-nums}
+
+/* TRADE */
+.dir{display:inline-flex;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:800;letter-spacing:0.5px;flex-shrink:0}
+.dir.CALL,.dir.BUY{background:rgba(16,185,129,0.18);color:var(--green)}
+.dir.PUT,.dir.SELL{background:rgba(239,68,68,0.18);color:var(--red)}
+.res{font-size:9px;font-weight:800;padding:1px 5px;border-radius:3px;margin-left:4px;flex-shrink:0}
+.res.win{background:var(--green);color:#000}
+.res.loss{background:var(--red);color:#fff}
+.res.pending{background:var(--amber);color:#000}
+
+/* OPPORTUNITIES (Telegram) */
+.cat{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:0.4px;padding:1px 5px;border-radius:3px;flex-shrink:0}
+.cat.lead_comercial{background:rgba(16,185,129,0.18);color:var(--green)}
+.cat.discussao_tecnica{background:rgba(59,130,246,0.18);color:var(--blue)}
+.cat.problema_cliente{background:rgba(239,68,68,0.18);color:var(--red)}
+.cat.ideia_produto{background:rgba(139,92,246,0.18);color:var(--violet)}
+.cat.sinal_correlato{background:rgba(245,158,11,0.18);color:var(--amber)}
+.cat.conversa_casual{background:rgba(148,163,184,0.18);color:var(--muted)}
+.cat.unknown{background:rgba(148,163,184,0.18);color:var(--muted)}
+.item .from{font-size:10px;color:var(--muted);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item .score{font-size:10px;font-weight:800;color:var(--cyan);font-variant-numeric:tabular-nums;flex-shrink:0}
+.item .msg{font-size:11px;color:var(--fg);line-height:1.35;margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+/* CHURCH */
+.opp-pill{font-size:9px;font-weight:800;padding:1px 5px;border-radius:3px;text-transform:uppercase;letter-spacing:0.3px}
+.opp-pill.visitante_engajado{background:rgba(16,185,129,0.18);color:var(--green)}
+.opp-pill.pedido_oracao{background:rgba(245,158,11,0.18);color:var(--amber)}
+.opp-pill.crise_ministerial{background:rgba(239,68,68,0.18);color:var(--red)}
+.opp-pill.doacao{background:rgba(59,130,246,0.18);color:var(--blue)}
+.urg{font-size:9px;font-weight:800;padding:1px 5px;border-radius:3px;text-transform:uppercase;flex-shrink:0}
+.urg.alta{background:var(--red);color:#fff}
+.urg.media{background:var(--amber);color:#000}
+.urg.baixa{background:var(--dim);color:#000}
+.act{font-size:10px;color:var(--dim);font-style:italic;margin-left:auto;flex-shrink:0}
+
+/* PLACEHOLDER CARD (slot vazio clicável pra add sessão) */
+.item-empty{
+  background:rgba(255,255,255,0.015);
+  border:2px dashed rgba(255,255,255,0.1);
+  border-radius:8px;
+  padding:18px 12px;
+  margin-bottom:4px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+  color:var(--dim);
+  text-align:center;
+  transition:all 0.2s;
+  min-height:78px;
+}
+.item-empty:hover{
+  border-color:var(--cyan);
+  color:var(--cyan);
+  background:rgba(34,211,238,0.05);
+  transform:translateY(-1px);
+}
+.item-empty .plus{font-size:22px;font-weight:300;margin-bottom:4px;line-height:1}
+.item-empty .lbl{font-size:10px;text-transform:uppercase;letter-spacing:0.5px;font-weight:700}
+.item-empty .sub{font-size:9px;color:var(--dim);margin-top:2px}
+
+/* MODAL */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:1000}
+.modal-bg.active{display:flex}
+.modal{background:var(--bg-2);border:1px solid var(--border-hi);border-radius:14px;padding:24px;width:min(420px,92vw);box-shadow:0 20px 60px 0 rgba(0,0,0,0.7)}
+.modal h3{font-size:14px;font-weight:800;margin-bottom:16px;color:#fff;display:flex;align-items:center;gap:8px}
+.modal label{display:block;font-size:11px;text-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin:12px 0 6px}
+.modal input,.modal select{width:100%;background:rgba(0,0,0,0.3);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:12px;color:var(--fg);font-family:inherit}
+.modal input:focus,.modal select:focus{outline:none;border-color:var(--cyan)}
+.modal .hint{font-size:10px;color:var(--dim);margin-top:3px}
+.modal .actions{display:flex;gap:8px;margin-top:20px;justify-content:flex-end}
+.modal button{background:var(--cyan);color:#000;border:none;border-radius:6px;padding:8px 14px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;transition:all 0.15s}
+.modal button:hover{filter:brightness(1.15)}
+.modal button.ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}
+.modal button.ghost:hover{color:#fff;border-color:var(--border-hi)}
+.modal .preset-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.modal .preset-chip{font-size:14px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:6px;padding:6px 10px;cursor:pointer;transition:all 0.15s}
+.modal .preset-chip:hover{background:rgba(34,211,238,0.1);border-color:var(--cyan)}
+
+/* EMPTY */
+.empty{padding:20px 10px;text-align:center;color:var(--dim);font-size:11px;font-style:italic}
+
+/* FOOTER */
+footer{position:fixed;bottom:0;left:48px;right:0;padding:3px 14px;background:rgba(0,0,0,0.6);color:var(--dim);font-size:9px;text-align:right;border-top:1px solid var(--border)}
+footer a{color:var(--cyan);text-decoration:none}
+footer a:hover{text-decoration:underline}
+
+/* ============== PADDING FIX (main scrolls, footer positions fixed) ============== */
+.content{padding-bottom:24px}
+
+/* SCROLLBAR */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.2)}
+
+/* RESPONSIVE */
+@media (max-width:680px){
+  .app{grid-template-columns:40px 1fr}
+  .sidebar{padding:4px 0;gap:3px}
+  .sb-icon{width:30px;height:30px;font-size:15px}
+  .topbar{padding:6px 10px}
+  .content{padding:6px}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .col{min-height:220px}
+}
+
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ============ SIDEBAR (ícones verticais) ============ -->
+  <aside class="sidebar">
+    <div class="sb-logo">⌘</div>
+    <div class="sb-icon active" data-pane="all" title="Tudo">📊</div>
+    <div class="sb-icon" data-pane="trade" title="Trade">📈</div>
+    <div class="sb-icon" data-pane="tel" title="Telegram">📨</div>
+    <div class="sb-icon" data-pane="church" title="Ministerial">⛪</div>
+    <div class="sb-spacer"></div>
+    <div class="sb-icon" id="btn-refresh" title="Refresh">🔄</div>
+    <div class="sb-icon" id="btn-mute" title="Som">🔔</div>
+    <div class="sb-icon" id="btn-full" title="Tela cheia">⛶</div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main class="main">
+
+    <header class="topbar">
+      <h1>
+        <span style="color:var(--cyan)">📡</span>
+        JARVIS Radar
+        <span class="badge" id="view-name">ALL</span>
+      </h1>
+      <div class="topbar-right">
+        <span class="live-pill"><span class="dot"></span>LIVE</span>
+        <span class="clock" id="clock">--:--:--</span>
+      </div>
+    </header>
+
+    <div class="content">
+
+      <!-- VIEW: ALL (3 colunas) -->
+      <div class="view active" id="view-all">
+
+        <div class="kpis">
+          <div class="kpi trade">
+            <div class="label">📈 Trade · Hoje</div>
+            <div class="value" id="kpi-trade">—</div>
+            <div class="sub" id="kpi-trade-sub">aguardando</div>
+          </div>
+          <div class="kpi tel">
+            <div class="label">📨 Telegram · Hot</div>
+            <div class="value" id="kpi-tel">—</div>
+            <div class="sub" id="kpi-tel-sub">aguardando</div>
+          </div>
+          <div class="kpi church">
+            <div class="label">⛪ Ministerial · Atenção</div>
+            <div class="value" id="kpi-church">—</div>
+            <div class="sub" id="kpi-church-sub">aguardando</div>
+          </div>
+          <div class="kpi alert">
+            <div class="label">🚨 Urgentes · Agora</div>
+            <div class="value" id="kpi-alert">—</div>
+            <div class="sub" id="kpi-alert-sub">aguardando</div>
+          </div>
+        </div>
+
+        <div class="grid-3">
+
+          <div class="col">
+            <div class="col-header">
+              <h2><span class="ico">📈</span> Trade ao Vivo</h2>
+              <span class="count" id="trade-count">0</span>
+            </div>
+            <div class="col-body" id="trade-body">
+              <div class="empty">aguardando primeiro sinal…</div>
+            </div>
+          </div>
+
+          <div class="col">
+            <div class="col-header">
+              <h2><span class="ico">📨</span> Telegram</h2>
+              <span class="count" id="tel-count">0</span>
+            </div>
+            <div class="col-body" id="tel-body">
+              <div class="empty">aguardando primeira mensagem…</div>
+            </div>
+          </div>
+
+          <div class="col">
+            <div class="col-header">
+              <h2><span class="ico">⛪</span> Radar Ministerial</h2>
+              <span class="count" id="church-count">0</span>
+            </div>
+            <div class="col-body" id="church-body">
+              <div class="empty">aguardando primeiro post…</div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- ============ SLOTS PRA NOVAS SESSÕES ============ -->
+        <div style="margin-top:14px">
+          <div class="col-header" style="border-radius:8px 8px 0 0;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-bottom:none">
+            <h2><span class="ico">🧩</span> Adicionar Sessão</h2>
+            <span class="count" id="slots-count">0/6 slots livres</span>
+          </div>
+          <div class="grid-3" id="slots-grid" style="grid-auto-rows:minmax(86px,auto);border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;padding:6px;background:rgba(0,0,0,0.15)"></div>
+        </div>
+
+      </div>
+
+      <!-- VIEW: TRADE ONLY -->
+      <div class="view" id="view-trade">
+        <div class="kpis">
+          <div class="kpi trade" style="grid-column:span 4">
+            <div class="label">📈 Sinais · últimos 30 min</div>
+            <div class="value" style="font-size:28px" id="kpi-trade-big">—</div>
+            <div class="sub" id="kpi-trade-big-sub">aguardando</div>
+          </div>
+        </div>
+        <div class="col" style="min-height:60vh">
+          <div class="col-header"><h2><span class="ico">📈</span> Trade Signals</h2><span class="count" id="trade-count-big">0</span></div>
+          <div class="col-body" id="trade-body-big"></div>
+        </div>
+      </div>
+
+      <!-- VIEW: TELEGRAM ONLY -->
+      <div class="view" id="view-tel">
+        <div class="kpis">
+          <div class="kpi tel" style="grid-column:span 2">
+            <div class="label">📨 Hot Leads</div>
+            <div class="value" style="font-size:28px" id="kpi-tel-big">—</div>
+          </div>
+          <div class="kpi tel" style="grid-column:span 2">
+            <div class="label">Total opportunities</div>
+            <div class="value" style="font-size:28px" id="kpi-tel-total">—</div>
+          </div>
+        </div>
+        <div class="col" style="min-height:60vh">
+          <div class="col-header"><h2><span class="ico">📨</span> Telegram Opportunities</h2><span class="count" id="tel-count-big">0</span></div>
+          <div class="col-body" id="tel-body-big"></div>
+        </div>
+      </div>
+
+      <!-- VIEW: CHURCH ONLY -->
+      <div class="view" id="view-church">
+        <div class="kpis">
+          <div class="kpi church" style="grid-column:span 2">
+            <div class="label">⛪ Alta urgência</div>
+            <div class="value" style="font-size:28px" id="kpi-church-big">—</div>
+          </div>
+          <div class="kpi church" style="grid-column:span 2">
+            <div class="label">Igrejas monitoradas</div>
+            <div class="value" style="font-size:28px" id="kpi-church-accounts">—</div>
+          </div>
+        </div>
+        <div class="col" style="min-height:60vh">
+          <div class="col-header"><h2><span class="ico">⛪</span> Radar Ministerial</h2><span class="count" id="church-count-big">0</span></div>
+          <div class="col-body" id="church-body-big"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <footer>
+      polling 5s · <a href="/api/radar/dashboard" target="_blank">/api/radar/dashboard</a>
+       · <span id="last-update">—</span>
+    </footer>
+
+  </main>
+</div>
+
+<!-- ============ MODAL: NOVA SESSÃO ============ -->
+<div class="modal-bg" id="modal-bg">
+  <div class="modal">
+    <h3>🧩 Adicionar nova sessão</h3>
+
+    <label>Nome da sessão</label>
+    <input id="m-name" placeholder="Ex: Financas Bot, Lagoinha, Filmes" maxlength="40">
+
+    <label>Ícone (clique pra escolher)</label>
+    <div class="preset-row" id="m-icons">
+      <span class="preset-chip" data-icon="📊">📊</span>
+      <span class="preset-chip" data-icon="📈">📈</span>
+      <span class="preset-chip" data-icon="📨">📨</span>
+      <span class="preset-chip" data-icon="⛪">⛪</span>
+      <span class="preset-chip" data-icon="💰">💰</span>
+      <span class="preset-chip" data-icon="🎬">🎬</span>
+      <span class="preset-chip" data-icon="📷">📷</span>
+      <span class="preset-chip" data-icon="🎵">🎵</span>
+      <span class="preset-chip" data-icon="📧">📧</span>
+      <span class="preset-chip" data-icon="🤖">🤖</span>
+      <span class="preset-chip" data-icon="📡">📡</span>
+      <span class="preset-chip" data-icon="🌐">🌐</span>
+    </div>
+
+    <label style="margin-top:14px">Endpoint JSON (opcional)</label>
+    <input id="m-endpoint" placeholder="/api/integrations/..." value="/api/radar/dashboard">
+    <div class="hint">URL interna que retorna JSON pro painel. Vazio = sessão decorativa sem dados.</div>
+
+    <label style="margin-top:14px">Cor de destaque</label>
+    <select id="m-color">
+      <option value="#06b6d4">Cyan (padrão)</option>
+      <option value="#10b981">Verde</option>
+      <option value="#ef4444">Vermelho</option>
+      <option value="#f59e0b">Âmbar</option>
+      <option value="#8b5cf6">Violeta</option>
+      <option value="#ec4899">Pink</option>
+      <option value="#3b82f6">Azul</option>
+    </select>
+
+    <div class="actions">
+      <button class="ghost" id="m-cancel">Cancelar</button>
+      <button id="m-save">Adicionar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ====================== JAVASCRIPT ======================
+const CATEGORY_LABEL = {
+  lead_comercial:'lead',        discussao_tecnica:'disc',
+  problema_cliente:'problema',  ideia_produto:'ideia',
+  sinal_correlato:'sinal',      conversa_casual:'casual'
+};
+const OPPORTUNITY_LABEL = {
+  visitante_engajado:'visitante', pedido_oracao:'oração',
+  crise_ministerial:'crise',     doacao:'doação'
+};
+
+const REFRESH_MS = 5000;
+const MAX_SLOTS = 6;
+const LS_KEY = 'jarvis_panels_v1';
+let currentPane = 'all';
+let customPanels = [];  // [{id,name,icon,endpoint,color}]
+
+// ===== localStorage helpers =====
+function loadPanels(){
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch(e) { return []; }
+}
+function savePanels(){
+  try { localStorage.setItem(LS_KEY, JSON.stringify(customPanels)); }
+  catch(e) { console.warn('localStorage falhou:', e); }
+}
+
+// ===== Format helpers =====
+function fmtTime(iso){
+  if(!iso) return '';
+  try{ return new Date(iso).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); }
+  catch{ return ''; }
+}
+function escapeHtml(s){
+  if(s==null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function fmtPnl(n){
+  const s = n >= 0 ? '+' : '';
+  return s + 'R$ ' + n.toFixed(2);
+}
+
+// ===== Render de cada card de radar (trade/telegram/church) =====
+function renderTradeCard(s){
+  const dir = (s.direction||'').toUpperCase();
+  let res = '<span class="res pending">PEND</span>';
+  if(s.result === 'win')  res = '<span class="res win">WIN ✓</span>';
+  else if(s.result==='loss') res = '<span class="res loss">LOSS ✗</span>';
+  return `<div class="item">
+    <div class="line">
+      <span class="sym">${escapeHtml(s.symbol||'')}</span>
+      <span class="dir ${dir}">${escapeHtml(dir)}</span>
+      ${res}
+      <span class="ts">${fmtTime(s.time)}</span>
+    </div>
+  </div>`;
+}
+function renderOppCard(o){
+  const cat = o.category || 'unknown';
+  const lbl = CATEGORY_LABEL[cat] || cat;
+  return `<div class="item ${o.is_hot_lead?'hot':''}" title="${escapeHtml(o.text||'')}">
+    <div class="line">
+      <span class="cat ${cat}">${escapeHtml(lbl)}</span>
+      <span class="from">${escapeHtml(o.chat||'')} · ${escapeHtml(o.sender||'')}</span>
+      <span class="score">${Math.round((o.score||0)*100)}%</span>
+    </div>
+    <div class="msg">${escapeHtml(o.text||'')}</div>
+  </div>`;
+}
+function renderChurchCard(i){
+  const opps = (i.opportunities||[]);
+  const oppsHtml = opps.map(o=>`<span class="opp-pill ${o}">${OPPORTUNITY_LABEL[o]||o}</span>`).join(' ');
+  const urg = i.urgency || 'baixa';
+  return `<div class="item ${urg}" title="${escapeHtml(i.text||'')}">
+    <div class="line">
+      ${oppsHtml}
+      <span class="urg ${urg}">${urg}</span>
+      <span class="act">→ ${escapeHtml(i.action||'')}</span>
+    </div>
+    <div class="msg"><strong>${escapeHtml(i.author||'')}</strong>: "${escapeHtml(i.text||'')}"</div>
+  </div>`;
+}
+
+// ===== Render do grid de slots =====
+function renderSlots(){
+  const grid = document.getElementById('slots-grid');
+  const used = customPanels.length;
+  document.getElementById('slots-count').textContent = `${used}/${MAX_SLOTS} slots usados`;
+
+  const cells = [];
+
+  // Cards adicionados (reais)
+  customPanels.forEach((p, idx) => {
+    const colorBorder = `border-left:2px solid ${p.color}`;
+    const endpoint = p.endpoint ? `<span class="ts" title="${escapeHtml(p.endpoint)}">${escapeHtml(p.endpoint.replace('/api/',''))}</span>` : '';
+    cells.push(`
+      <div class="item" style="${colorBorder};cursor:pointer" data-panel-id="${p.id}" title="${escapeHtml(p.endpoint||'sem endpoint')}">
+        <div class="line">
+          <span class="sym" style="color:${p.color}">${p.icon} ${escapeHtml(p.name)}</span>
+          <span class="act" data-del-id="${p.id}" style="color:var(--red);cursor:pointer" title="Remover">×</span>
+          ${endpoint}
+        </div>
+        <div class="msg" id="panel-body-${p.id}">
+          <span style="color:var(--dim)">aguardando dados…</span>
+        </div>
+      </div>
+    `);
+  });
+
+  // Slots vazios (placeholders clicáveis)
+  const remaining = MAX_SLOTS - used;
+  for (let i = 0; i < remaining; i++) {
+    cells.push(`
+      <div class="item-empty" data-slot="${i}" title="Clique pra adicionar uma nova sessão">
+        <div class="plus">+</div>
+        <div class="lbl">Nova Sessão</div>
+        <div class="sub">slot ${used + i + 1} livre</div>
+      </div>
+    `);
+  }
+
+  grid.innerHTML = cells.join('');
+
+  // Bind clicks: empty slot → abre modal
+  grid.querySelectorAll('.item-empty').forEach(el => {
+    el.addEventListener('click', openModal);
+  });
+  // Bind clicks: delete (×) em cards existentes
+  grid.querySelectorAll('[data-del-id]').forEach(el => {
+    el.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const id = el.dataset.delId;
+      if (confirm('Remover esta sessão do painel?')) {
+        customPanels = customPanels.filter(p => p.id !== id);
+        savePanels();
+        renderSlots();
+      }
+    });
+  });
+}
+
+// ===== Modal control =====
+let selectedIcon = '📊';
+let selectedColor = '#06b6d4';
+
+function openModal(){
+  document.getElementById('m-name').value = '';
+  document.getElementById('m-endpoint').value = '/api/radar/dashboard';
+  document.getElementById('m-color').value = '#06b6d4';
+  selectedIcon = '📊';
+  selectedColor = '#06b6d4';
+  document.querySelectorAll('.preset-chip').forEach(c => c.style.border = '1px solid var(--border)');
+  const defaultChip = document.querySelector(`.preset-chip[data-icon="${selectedIcon}"]`);
+  if (defaultChip) defaultChip.style.border = '1px solid var(--cyan)';
+  document.getElementById('modal-bg').classList.add('active');
+  setTimeout(() => document.getElementById('m-name').focus(), 50);
+}
+function closeModal(){
+  document.getElementById('modal-bg').classList.remove('active');
+}
+
+document.getElementById('m-cancel').addEventListener('click', closeModal);
+document.getElementById('modal-bg').addEventListener('click', (ev) => {
+  if (ev.target.id === 'modal-bg') closeModal();
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') closeModal();
+});
+
+document.querySelectorAll('.preset-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    selectedIcon = chip.dataset.icon;
+    document.querySelectorAll('.preset-chip').forEach(c => c.style.border = '1px solid var(--border)');
+    chip.style.border = '2px solid var(--cyan)';
+  });
+});
+
+document.getElementById('m-color').addEventListener('change', (ev) => {
+  selectedColor = ev.target.value;
+});
+
+document.getElementById('m-save').addEventListener('click', () => {
+  const name = document.getElementById('m-name').value.trim();
+  if (!name) { alert('Dá um nome pra sessão, Pô.'); return; }
+  if (customPanels.length >= MAX_SLOTS) { alert(`Limite de ${MAX_SLOTS} sessões.`); return; }
+  const endpoint = document.getElementById('m-endpoint').value.trim();
+  const id = 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+  customPanels.push({ id, name, icon: selectedIcon, endpoint, color: selectedColor });
+  savePanels();
+  renderSlots();
+  closeModal();
+});
+
+// ===== Fetch + dispatch =====
+async function refresh(){
+  try{
+    const r = await fetch('/api/radar/dashboard?_='+Date.now(),{cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const data = await r.json();
+    renderAll(data);
+    await refreshCustomPanels();
+    document.getElementById('last-update').textContent = '↑ '+new Date().toLocaleTimeString('pt-BR');
+  }catch(e){
+    document.getElementById('last-update').textContent = '⚠️ '+e.message;
+  }
+}
+
+async function refreshCustomPanels(){
+  for (const p of customPanels) {
+    if (!p.endpoint) continue;
+    try {
+      const r = await fetch(p.endpoint + (p.endpoint.includes('?') ? '&' : '?') + '_='+Date.now(), {cache:'no-store'});
+      if (!r.ok) throw new Error('HTTP '+r.status);
+      const data = await r.json();
+      renderCustomPanel(p, data);
+    } catch(e) {
+      const el = document.getElementById('panel-body-'+p.id);
+      if (el) el.innerHTML = `<span style="color:var(--red);font-size:10px">⚠️ ${escapeHtml(e.message)}</span>`;
+    }
+  }
+}
+
+function renderCustomPanel(p, data){
+  const el = document.getElementById('panel-body-'+p.id);
+  if (!el) return;
+  // Heurística simples: extrai arrays de dicts do JSON
+  const candidates = [];
+  function findArrays(obj, path=''){
+    if (!obj || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) {
+      if (obj.length > 0 && typeof obj[0] === 'object') candidates.push({path, sample: obj[0], arr: obj});
+      return;
+    }
+    for (const k of Object.keys(obj)) {
+      findArrays(obj[k], path ? path+'.'+k : k);
+    }
+  }
+  findArrays(data);
+
+  if (candidates.length === 0) {
+    el.innerHTML = `<span style="color:var(--dim);font-size:10px">endpoint retornou JSON sem arrays de items</span>`;
+    return;
+  }
+
+  // Pega o array com mais items (mais "denso")
+  candidates.sort((a,b) => b.arr.length - a.arr.length);
+  const top = candidates[0];
+  const items = top.arr.slice(0, 5);
+
+  // Render genérico: chave:valor
+  el.innerHTML = items.map(it => {
+    const keys = Object.keys(it);
+    const summary = keys.slice(0, 3).map(k => {
+      const v = it[k];
+      const sv = typeof v === 'object' ? JSON.stringify(v).slice(0,30) : String(v).slice(0,30);
+      return `<span style="color:var(--dim)">${escapeHtml(k)}:</span> <span style="color:var(--fg)">${escapeHtml(sv)}</span>`;
+    }).join(' · ');
+    return `<div style="font-size:10px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${summary}</div>`;
+  }).join('');
+}
+
+// ===== Render principal =====
+function renderAll(data){
+  const t = data.trade || {};
+  const signals = t.signals_recent || [];
+  const today = t.today || {};
+  const pnl = today.pnl_brl || 0;
+
+  document.getElementById('kpi-trade').textContent = fmtPnl(pnl);
+  document.getElementById('kpi-trade-sub').textContent =
+    `${today.wins||0}W · ${today.losses||0}L · ${today.win_rate||0}%WR · ${today.total||0}/dia`;
+  document.getElementById('kpi-trade-big').textContent = signals.length;
+  document.getElementById('kpi-trade-big-sub').textContent =
+    `${today.wins||0}W · ${today.losses||0}L · ${fmtPnl(pnl)}`;
+
+  const tradeBody = signals.length===0 ? '<div class="empty">aguardando primeiro sinal…</div>' : signals.map(renderTradeCard).join('');
+  document.getElementById('trade-body').innerHTML = tradeBody;
+  document.getElementById('trade-body-big').innerHTML = tradeBody;
+  document.getElementById('trade-count').textContent = signals.length;
+  document.getElementById('trade-count-big').textContent = signals.length + ' sinais · 30min';
+
+  const tp = data.telegram_opportunities || {};
+  const stats = tp.stats || {};
+  const hot = tp.hot || [];
+
+  document.getElementById('kpi-tel').textContent = stats.hot_leads || 0;
+  document.getElementById('kpi-tel-sub').textContent =
+    `${stats.total_opportunities||0} tot · ${stats.convertidos||0} conv`;
+  document.getElementById('kpi-tel-big').textContent = stats.hot_leads || 0;
+  document.getElementById('kpi-tel-total').textContent = stats.total_opportunities || 0;
+
+  const telBody = hot.length===0 ? '<div class="empty">aguardando primeira mensagem…</div>' : hot.map(renderOppCard).join('');
+  document.getElementById('tel-body').innerHTML = telBody;
+  document.getElementById('tel-body-big').innerHTML = telBody;
+  document.getElementById('tel-count').textContent = hot.length + ' hot';
+  document.getElementById('tel-count-big').textContent = hot.length;
+
+  const cr = data.church_radar || {};
+  const cs = cr.stats || {};
+  const high = cr.high_urgency || [];
+  const others = cr.new_others || [];
+  const allChurch = [...high, ...others];
+
+  const urgCount = cs.items_high_urgency || 0;
+  document.getElementById('kpi-church').textContent = urgCount;
+  document.getElementById('kpi-church-sub').textContent =
+    `${cs.items_new||0} novos · ${cs.accounts_monitored||0} contas`;
+  document.getElementById('kpi-church-big').textContent = urgCount;
+  document.getElementById('kpi-church-accounts').textContent = cs.accounts_monitored||0;
+
+  const churchBody = allChurch.length===0 ? '<div class="empty">aguardando primeiro post…</div>' : allChurch.map(renderChurchCard).join('');
+  document.getElementById('church-body').innerHTML = churchBody;
+  document.getElementById('church-body-big').innerHTML = churchBody;
+  document.getElementById('church-count').textContent = allChurch.length + ' itens';
+  document.getElementById('church-count-big').textContent = allChurch.length + ' itens';
+
+  const totalUrgent = (urgCount||0) + (stats.hot_leads||0);
+  document.getElementById('kpi-alert').textContent = totalUrgent;
+  document.getElementById('kpi-alert-sub').textContent = 'ministerial + telegram';
+
+  document.querySelectorAll('.sb-icon[data-pane]').forEach(ic => {
+    const p = ic.dataset.pane;
+    if(p==='trade') ic.classList.toggle('has-data', signals.length > 0);
+    if(p==='tel')    ic.classList.toggle('has-data', hot.length > 0);
+    if(p==='church') ic.classList.toggle('has-data', allChurch.length > 0);
+  });
+}
+
+// ===== Clock =====
+function tick(){ document.getElementById('clock').textContent = new Date().toLocaleTimeString('pt-BR'); }
+
+// ===== Pane switch (sidebar) =====
+document.querySelectorAll('.sb-icon[data-pane]').forEach(ic => {
+  ic.addEventListener('click', () => {
+    const pane = ic.dataset.pane;
+    currentPane = pane;
+    document.querySelectorAll('.sb-icon[data-pane]').forEach(x => x.classList.remove('active'));
+    ic.classList.add('active');
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('view-'+pane).classList.add('active');
+    document.getElementById('view-name').textContent = pane.toUpperCase();
+  });
+});
+
+// ===== Other sidebar buttons =====
+document.getElementById('btn-refresh').addEventListener('click', refresh);
+document.getElementById('btn-full').addEventListener('click', () => {
+  if(document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen?.();
+});
+document.getElementById('btn-mute').addEventListener('click', () => {
+  const ic = document.getElementById('btn-mute');
+  ic.textContent = ic.textContent === '🔔' ? '🔕' : '🔔';
+});
+
+// ===== Boot =====
+customPanels = loadPanels();
+renderSlots();
+tick(); setInterval(tick, 1000);
+refresh(); setInterval(refresh, REFRESH_MS);
+
+</script>
+</body>
+</html>
