@@ -14,6 +14,7 @@ import pathlib
 import sys
 import threading
 import time
+import json
 from datetime import datetime
 
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
@@ -25,9 +26,44 @@ from pydantic import BaseModel
 PROJECT_DIR = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_DIR))
 
+
+# ---- Lightweight .env loader (stdlib only) ----
+# Reads KEY=VALUE lines from a file next to this script if the env var
+# is not already set. Existing env vars always win — never overwrites.
+# Lines starting with '#' or empty lines are ignored. Quotes are stripped.
+def _load_env_file(path: pathlib.Path) -> None:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if value.startswith(('"', "'")) and value.endswith(('"', "'")) and len(value) >= 2:
+            value = value[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_env_file(PROJECT_DIR / ".env")
+
+
 # ---- Lazy / safe imports for jarvis subsystems ----
-# pyaudio: usado para listar microfones; nao e tocado audio no servidor.
-import pyaudio
+# pyaudio is only needed to enumerate microphones; do NOT import at startup
+# so the dashboard keeps working even when pyaudio isn't installed.
+def _get_pyaudio():
+    try:
+        import pyaudio
+        return pyaudio
+    except Exception as exc:  # noqa: BLE001
+        LOG.debug("pyaudio unavailable: %s", exc)
+        return None
 
 # Track when we started, for the "uptime" tile.
 STARTED_AT = time.time()
@@ -79,6 +115,18 @@ _start_location_detection()
 # File the brain appends to. We surface its contents in the UI.
 CHAT_LOG = PROJECT_DIR / "chat_hystory.txt"
 LOG_FILE = PROJECT_DIR / "log.txt"
+
+# Logger basico -- usado em /api/trade/webhook e outros endpoints.
+# (Antes usava-se uma variavel LOG que nao existia, causando NameError
+# quando o webhook era chamado, o que derrubava o dashboard inteiro.)
+import logging
+LOG = logging.getLogger("jarvis.dashboard")
+if not LOG.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s",
+                                       datefmt="%Y-%m-%d %H:%M:%S"))
+    LOG.addHandler(_h)
+    LOG.setLevel(logging.INFO)
 
 # WebSocket clients that are currently connected to /ws/logs.
 _ws_clients: set[WebSocket] = set()
@@ -500,7 +548,176 @@ def integrations() -> JSONResponse:
     out.append({"name": "WhatsApp", "available": True, "connected": False})
     out.append({"name": "Calendário", "available": False, "connected": False})
 
+    # day-trade-bot integration: only "available" if the token env var is set.
+    trade_token_set = bool(os.environ.get("JARVIS_DASHBOARD_TRADE_WEBHOOK_TOKEN"))
+    out.append({
+        "name": "Day-Trade-Bot",
+        "available": trade_token_set,
+        "connected": trade_token_set,
+        "events_received": len(TRADE_SIGNAL_BUFFER),
+    })
+
     return JSONResponse({"items": out})
+
+
+# ---------- WebSocket manager (lightweight) ----------
+
+class WSManager:
+    """Tracks live WebSocket connections and broadcasts JSON messages.
+
+    Used for trade-signal push notifications. If no clients are connected,
+    broadcast() is a no-op — clients just call /api/integrations/trade/recent
+    on reconnect to catch up.
+    """
+
+    def __init__(self) -> None:
+        self._clients: set = set()
+        self._lock = threading.Lock()
+
+    async def connect(self, ws) -> None:
+        await ws.accept()
+        with self._lock:
+            self._clients.add(ws)
+
+    def disconnect(self, ws) -> None:
+        with self._lock:
+            self._clients.discard(ws)
+
+    async def broadcast(self, payload: dict) -> None:
+        import asyncio
+        msg = json.dumps(payload, ensure_ascii=False, default=str)
+        with self._lock:
+            stale = []
+            for ws in list(self._clients):
+                try:
+                    await ws.send_text(msg)
+                except Exception:  # noqa: BLE001
+                    stale.append(ws)
+            for ws in stale:
+                self._clients.discard(ws)
+
+
+ws_manager = WSManager()
+
+
+@app.websocket("/ws")
+async def ws_endpoint(websocket: WebSocket) -> None:
+    """WebSocket endpoint for push notifications (trade signals, etc).
+
+    Sends {"type": "hello", "data": {"protocol": "jarvis-ws", "version": 1}}
+    on connect, then any subsequent broadcasts.
+    """
+    await ws_manager.connect(websocket)
+    try:
+        await websocket.send_text(json.dumps({
+            "type": "hello",
+            "data": {"protocol": "jarvis-ws", "version": 1},
+        }, ensure_ascii=False))
+        # Keep the connection alive; we don't expect inbound messages but
+        # accept and discard them so the connection doesn't drop on us.
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        LOG.debug("ws endpoint error: %s", exc)
+    finally:
+        ws_manager.disconnect(websocket)
+
+
+# ---------- Trade Webhook (day-trade-bot → JARVIS) ----------
+
+class TradeWebhookPayload(BaseModel):
+    event: str  # "signal" | "fill" | "summary"
+    timestamp: str
+    symbol: str | None = None
+    action: str | None = None  # "CALL" | "PUT"
+    expiry_minutes: int | None = None
+    reason: str | None = None
+    indicator_value: float | None = None
+    balance: float | None = None
+    amount: float | None = None
+    pnl: float | None = None
+    result: str | None = None
+    n_trades: int | None = None
+    n_wins: int | None = None
+    n_losses: int | None = None
+    win_rate: float | None = None
+    engine: str | None = None
+    story: str | None = None
+
+
+# In-memory ring buffer for the most recent trade signals (cap 50).
+TRADE_SIGNAL_BUFFER: list[dict] = []
+TRADE_SIGNAL_BUFFER_MAX = 50
+
+
+def _validate_trade_token(authorization: str | None) -> bool:
+    """Return True if Authorization header matches env token.
+
+    Reads JARVIS_DASHBOARD_TRADE_WEBHOOK_TOKEN. If unset, webhook is disabled
+    (returns False for any call) — fail-closed.
+    """
+    expected = os.environ.get("JARVIS_DASHBOARD_TRADE_WEBHOOK_TOKEN")
+    if not expected:
+        return False
+    if not authorization:
+        return False
+    # Accept "Bearer xxx" or raw token
+    token = authorization
+    if authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    # Constant-time-ish compare
+    return len(token) == len(expected) and all(a == b for a, b in zip(token, expected))
+
+
+@app.post("/api/integrations/webhook/trade-signal")
+async def api_trade_webhook(payload: TradeWebhookPayload, request: Request) -> JSONResponse:
+    """Receives signals from day-trade-bot and broadcasts them to the dashboard.
+
+    Auth: Authorization: Bearer <token> matching JARVIS_DASHBOARD_TRADE_WEBHOOK_TOKEN.
+    Returns 401 if token missing/wrong; 503 if webhook not configured.
+    """
+    import uuid
+    auth = request.headers.get("authorization")
+    if not os.environ.get("JARVIS_DASHBOARD_TRADE_WEBHOOK_TOKEN"):
+        return JSONResponse(
+            {"ok": False, "error": "trade webhook disabled (set JARVIS_DASHBOARD_TRADE_WEBHOOK_TOKEN)"},
+            status_code=503,
+        )
+    if not _validate_trade_token(auth):
+        return JSONResponse(
+            {"ok": False, "error": "invalid or missing Authorization header"},
+            status_code=401,
+        )
+
+    entry_id = str(uuid.uuid4())
+    entry = {"id": entry_id, "received_at": datetime.now().isoformat(), **payload.model_dump()}
+    TRADE_SIGNAL_BUFFER.append(entry)
+    # Trim oldest beyond cap
+    if len(TRADE_SIGNAL_BUFFER) > TRADE_SIGNAL_BUFFER_MAX:
+        del TRADE_SIGNAL_BUFFER[: len(TRADE_SIGNAL_BUFFER) - TRADE_SIGNAL_BUFFER_MAX]
+
+    # Broadcast via WebSocket (best-effort; clients that aren't connected just miss it).
+    try:
+        await ws_manager.broadcast({"type": "trade_signal", "data": entry})
+    except Exception as exc:  # noqa: BLE001
+        LOG.warning("ws broadcast failed: %s", exc)
+
+    LOG.info("trade webhook: %s event=%s symbol=%s action=%s",
+             entry_id, payload.event, payload.symbol, payload.action)
+    return JSONResponse({"ok": True, "id": entry_id, "buffered": len(TRADE_SIGNAL_BUFFER)})
+
+
+@app.get("/api/integrations/trade/recent", include_in_schema=False)
+def api_trade_recent(limit: int = 20) -> JSONResponse:
+    """Return the most recent trade signals received via webhook.
+
+    limit is clamped to [1, 50].
+    """
+    limit = max(1, min(int(limit), TRADE_SIGNAL_BUFFER_MAX))
+    recent = TRADE_SIGNAL_BUFFER[-limit:][::-1]  # newest first
+    return JSONResponse({"count": len(recent), "events": recent})
 
 
 # ---------- Memory (projects, decisions, tasks) ----------

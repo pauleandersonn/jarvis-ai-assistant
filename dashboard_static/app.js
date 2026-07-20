@@ -1322,6 +1322,166 @@ function bindSlider(id, labelId) {
   s.addEventListener("input", () => { l.textContent = `${s.value}%`; });
 }
 
+// ───────── Trade Webhook (day-trade-bot → JARVIS) ─────────
+// Story 2.0 — bot envia sinais via POST /api/integrations/webhook/trade-signal.
+// Aqui renderizamos a lista e nos inscrevemos no WebSocket /ws pra toast
+// em tempo real.
+
+const _tradeSeen = new Set();
+let _tradeWs = null;
+let _tradeWsRetries = 0;
+
+async function loadTradeRecent(limit = 20) {
+  const feed = document.getElementById("trade-feed");
+  if (!feed) return;
+  feed.innerHTML = '<p class="muted">Carregando...</p>';
+  try {
+    const r = await fetch(`/api/integrations/trade/recent?limit=${limit}`);
+    const data = await r.json();
+    const events = data.events || [];
+    if (!events.length) {
+      feed.innerHTML = '<p class="muted">Sem sinais ainda. O bot está observando.</p>';
+      return;
+    }
+    feed.innerHTML = events.map(renderTradeCard).join("");
+    // Marca como vistos pro toast não duplicar
+    events.forEach(e => _tradeSeen.add(e.id));
+    updateTradeBadge();
+  } catch (err) {
+    feed.innerHTML = `<p class="muted">Erro: ${escapeHtml(String(err))}</p>`;
+  }
+}
+
+function renderTradeCard(e) {
+  const ts = e.received_at ? new Date(e.received_at).toLocaleString("pt-BR", { hour12: false }) : "—";
+  const ev = escapeHtml(e.event || "?");
+  if (ev === "signal") {
+    const arrow = e.action === "CALL" ? "⬆️" : e.action === "PUT" ? "⬇️" : "·";
+    const cls = e.action === "CALL" ? "trade-call" : e.action === "PUT" ? "trade-put" : "";
+    const ind = e.indicator_value != null ? `RSI ${Number(e.indicator_value).toFixed(1)}` : "";
+    return `
+      <article class="trade-card ${cls}">
+        <header>
+          <span class="trade-action">${arrow} ${escapeHtml(e.action || "")}</span>
+          <span class="trade-symbol">${escapeHtml(e.symbol || "?")}</span>
+          <time class="trade-time">${ts}</time>
+        </header>
+        <p class="trade-reason">${escapeHtml(e.reason || "")} ${ind ? '· <em>' + escapeHtml(ind) + '</em>' : ''}</p>
+        <footer>
+          <span>Saldo R$ ${Number(e.balance || 0).toFixed(2)}</span>
+          ${e.expiry_minutes ? `<span>Expira em ${e.expiry_minutes} min</span>` : ""}
+        </footer>
+      </article>`;
+  }
+  if (ev === "fill") {
+    const arrow = e.action === "CALL" ? "⬆️" : e.action === "PUT" ? "⬇️" : "·";
+    const cls = e.result === "WIN" ? "trade-win" : e.result === "LOSS" ? "trade-loss" : "";
+    return `
+      <article class="trade-card trade-fill ${cls}">
+        <header>
+          <span class="trade-action">${arrow} ${escapeHtml(e.action || "")} → ${escapeHtml(e.result || "")}</span>
+          <span class="trade-symbol">${escapeHtml(e.symbol || "?")}</span>
+          <time class="trade-time">${ts}</time>
+        </header>
+        <p class="trade-reason">PnL R$ ${Number(e.pnl || 0).toFixed(2)} · Valor R$ ${Number(e.amount || 0).toFixed(2)}</p>
+        <footer><span>Saldo R$ ${Number(e.balance || 0).toFixed(2)}</span></footer>
+      </article>`;
+  }
+  if (ev === "summary") {
+    return `
+      <article class="trade-card trade-summary">
+        <header>
+          <span class="trade-action">📋 Resumo</span>
+          <time class="trade-time">${ts}</time>
+        </header>
+        <p>Trades ${e.n_trades ?? 0} · Wins ${e.n_wins ?? 0} · Losses ${e.n_losses ?? 0} · WR ${Number(e.win_rate || 0).toFixed(1)}%</p>
+        <footer><span>Saldo final R$ ${Number(e.balance || 0).toFixed(2)}</span></footer>
+      </article>`;
+  }
+  return `<article class="trade-card"><pre>${escapeHtml(JSON.stringify(e, null, 2))}</pre></article>`;
+}
+
+function updateTradeBadge() {
+  // Badge simples: mostra contador (sem unread tracking — todo sinal é destaque)
+  const badge = document.getElementById("trade-badge");
+  if (!badge) return;
+  badge.hidden = false;
+  badge.textContent = String(_tradeSeen.size);
+}
+
+function showTradeToast(e) {
+  const container = document.getElementById("toast-container");
+  if (!container) return;
+  const ev = e.event || "?";
+  let title = "Sinal trade";
+  let body = "";
+  if (ev === "signal") {
+    const arrow = e.action === "CALL" ? "🟢 ⬆️" : e.action === "PUT" ? "🔴 ⬇️" : "•";
+    title = `${arrow} ${e.action} ${e.symbol || ""}`;
+    body = e.reason || "";
+  } else if (ev === "fill") {
+    title = `📊 Fill ${e.result || ""} ${e.symbol || ""}`;
+    body = `PnL R$ ${Number(e.pnl || 0).toFixed(2)}`;
+  } else if (ev === "summary") {
+    title = "📋 Resumo de trades";
+    body = `${e.n_trades} trades · WR ${Number(e.win_rate || 0).toFixed(1)}%`;
+  }
+  const el = document.createElement("div");
+  el.className = `toast toast-${ev}`;
+  el.innerHTML = `
+    <button class="toast-close" onclick="this.parentElement.remove()" aria-label="Fechar">×</button>
+    <strong>${escapeHtml(title)}</strong>
+    <p>${escapeHtml(body)}</p>
+  `;
+  container.appendChild(el);
+  // Auto-dismiss em 8s
+  setTimeout(() => { el.classList.add("toast-fade"); setTimeout(() => el.remove(), 400); }, 8000);
+}
+
+function connectTradeSocket() {
+  if (_tradeWs && (_tradeWs.readyState === WebSocket.OPEN || _tradeWs.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const url = `${proto}//${location.host}/ws`;
+  let ws;
+  try {
+    ws = new WebSocket(url);
+  } catch (err) {
+    console.warn("ws init failed", err);
+    scheduleTradeReconnect();
+    return;
+  }
+  _tradeWs = ws;
+  ws.onmessage = (msg) => {
+    let payload;
+    try { payload = JSON.parse(msg.data); } catch { return; }
+    if (payload && payload.type === "trade_signal" && payload.data) {
+      handleTradeSignal(payload.data);
+    }
+  };
+  ws.onclose = () => { _tradeWs = null; scheduleTradeReconnect(); };
+  ws.onerror = () => { /* onclose follows */ };
+}
+
+function scheduleTradeReconnect() {
+  _tradeWsRetries = Math.min(_tradeWsRetries + 1, 6);
+  const delay = Math.min(1000 * (2 ** _tradeWsRetries), 30000);
+  setTimeout(connectTradeSocket, delay);
+}
+
+function handleTradeSignal(e) {
+  if (_tradeSeen.has(e.id)) return;
+  _tradeSeen.add(e.id);
+  updateTradeBadge();
+  showTradeToast(e);
+  // Se a aba Trade estiver aberta, prepend o card
+  const feed = document.getElementById("trade-feed");
+  if (feed && document.getElementById("panel-trade")?.classList.contains("active")) {
+    feed.insertAdjacentHTML("afterbegin", renderTradeCard(e));
+  }
+}
+
 // ───────── Boot ─────────
 document.addEventListener("DOMContentLoaded", () => {
   // Sliders
@@ -1330,7 +1490,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Tabs
   document.querySelectorAll(".drawer-tab").forEach(b => {
-    b.addEventListener("click", () => switchTab(b.dataset.tab));
+    b.addEventListener("click", () => {
+      switchTab(b.dataset.tab);
+      // Lazy-load Trade feed when tab opens
+      if (b.dataset.tab === "trade") loadTradeRecent();
+    });
   });
 
   // Assistants
@@ -1535,4 +1699,13 @@ if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", startVoiceConfirmPolling);
 } else {
   startVoiceConfirmPolling();
+}
+
+// Connect to trade WebSocket (push notifications from day-trade-bot)
+if (typeof WebSocket !== "undefined") {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", connectTradeSocket);
+  } else {
+    connectTradeSocket();
+  }
 }

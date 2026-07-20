@@ -276,6 +276,7 @@
     <button class="drawer-tab" data-tab="weather">Clima</button>
     <button class="drawer-tab" data-tab="image">Imagem</button>
     <button class="drawer-tab" data-tab="controls">Controles</button>
+    <button class="drawer-tab" data-tab="trade">Trade <span id="trade-badge" class="trade-badge" hidden>0</span></button>
     <button class="drawer-tab" data-tab="logs">Logs</button>
     <button class="drawer-tab" data-tab="hermes">⚷ Hermes</button>
   </div>
@@ -402,6 +403,20 @@
     <pre id="logs" class="logs"></pre>
   </div>
 
+  <!-- Trade tab — recebe sinais do day-trade-bot via webhook (Story 2.0) -->
+  <div class="drawer-panel" id="panel-trade">
+    <div class="panel-header">
+      <h3>Trade — Sinais do bot</h3>
+      <button class="panel-refresh" id="trade-refresh" onclick="loadTradeRecent()">Atualizar</button>
+    </div>
+    <p class="panel-hint">
+      Conectado ao <code>day-trade-bot</code> via webhook. Sinais mais recentes primeiro.
+    </p>
+    <div id="trade-feed" class="trade-feed">
+      <p class="muted">Sem sinais ainda. O bot está <a href="#" onclick="loadTradeRecent();return false;">observando</a>.</p>
+    </div>
+  </div>
+
   <!-- Hermes tab (Modo 3: bridge para a mente do Hermes) -->
   <div class="drawer-panel" id="panel-hermes">
     <div class="panel-header"><h3>⚷ Hermes — Memória Compartilhada</h3></div>
@@ -429,6 +444,9 @@
   <span class="footer-sep">·</span>
   <span class="footer-tagline">Assistente pessoal inteligente · FreeAI · PT-BR</span>
 </footer>
+
+<!-- Toast container — push notifications via WebSocket -->
+<div id="toast-container" class="toast-container" aria-live="polite"></div>
 
 <script src="/static/app.js"></script>
 </body>
