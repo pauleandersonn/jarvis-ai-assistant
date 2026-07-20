@@ -1494,6 +1494,8 @@ document.addEventListener("DOMContentLoaded", () => {
       switchTab(b.dataset.tab);
       // Lazy-load Trade feed when tab opens
       if (b.dataset.tab === "trade") loadTradeRecent();
+      // Reset status hint when Messages tab opens
+      if (b.dataset.tab === "messages") updateMsgStatus("ready", "Aberto. Aguardando login nos iframes…");
     });
   });
 
@@ -1708,4 +1710,56 @@ if (typeof WebSocket !== "undefined") {
   } else {
     connectTradeSocket();
   }
+}
+
+// ───────── Messages (Telegram + WhatsApp side-by-side) ─────────
+// Quick-look inside the JARVIS drawer. Iframes load lazily when the tab opens.
+// First load may need a manual sign-in (Telegram phone + WhatsApp QR); subsequent
+// visits reuse the browser session via cookies.
+function updateMsgStatus(state, text) {
+  const el = document.getElementById("msg-status");
+  if (!el) return;
+  const labels = {
+    loading: "⏳ " + text,
+    ready:   "✓ " + text,
+    error:   "✗ " + text,
+  };
+  el.textContent = labels[state] || text;
+  el.style.color = state === "error" ? "#f87171"
+                 : state === "ready"  ? "#34d399"
+                 : "var(--text-dim, #94a3b8)";
+}
+
+function initMessagesPanel() {
+  const reloadBtn = document.getElementById("msg-reload");
+  if (!reloadBtn) return;
+  reloadBtn.addEventListener("click", () => {
+    const tg = document.getElementById("telegram-frame");
+    const wa = document.getElementById("whatsapp-frame");
+    if (!tg || !wa) return;
+    updateMsgStatus("loading", "Recarregando Telegram + WhatsApp…");
+    // Use a cache-busting query so the iframe truly reloads
+    const cb = "v=" + Date.now();
+    tg.src = "https://web.telegram.org/a/?" + cb;
+    wa.src = "https://web.whatsapp.com/?" + cb;
+    setTimeout(() => updateMsgStatus("ready", "Iframes recarregados."), 800);
+  });
+
+  // Track iframe load events for nicer status feedback
+  ["telegram-frame", "whatsapp-frame"].forEach(id => {
+    const frame = document.getElementById(id);
+    if (!frame) return;
+    frame.addEventListener("load", () => {
+      updateMsgStatus("ready", `${id === "telegram-frame" ? "Telegram" : "WhatsApp"} carregado.`);
+    });
+    frame.addEventListener("error", () => {
+      updateMsgStatus("error", `${id === "telegram-frame" ? "Telegram" : "WhatsApp"} falhou. Confira sua conexão.`);
+    });
+  });
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initMessagesPanel);
+} else {
+  initMessagesPanel();
 }

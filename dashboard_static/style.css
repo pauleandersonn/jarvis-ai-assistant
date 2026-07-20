@@ -1978,3 +1978,61 @@ body.state-listening .mic-btn {
   from { transform: translateX(20px); opacity: 0; }
   to   { transform: translateX(0); opacity: 1; }
 }
+
+/* ───────── Messages grid (Telegram + WhatsApp side-by-side) ───────── */
+.msg-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+  height: calc(100vh - 280px);
+  min-height: 420px;
+}
+.msg-tile {
+  display: flex;
+  flex-direction: column;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 10px;
+  overflow: hidden;
+  min-height: 0;
+}
+.msg-tile header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(91, 108, 255, 0.08);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  flex-shrink: 0;
+}
+.msg-icon { font-size: 16px; }
+.msg-title { font-weight: 600; font-size: 13px; }
+.msg-open {
+  margin-left: auto;
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+.msg-open:hover { color: var(--primary); background: rgba(91, 108, 255, 0.12); }
+
+.msg-tile iframe {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: white;
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .msg-grid {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+  .msg-tile iframe {
+    height: 480px;
+  }
+}

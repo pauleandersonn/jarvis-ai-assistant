@@ -271,6 +271,7 @@
     <button class="drawer-tab active" data-tab="chat">Conversa</button>
     <button class="drawer-tab" data-tab="email">Email</button>
     <button class="drawer-tab" data-tab="agenda">Agenda</button>
+    <button class="drawer-tab" data-tab="messages">Mensagens</button>
     <button class="drawer-tab" data-tab="projects">Projetos</button>
     <button class="drawer-tab" data-tab="research">Pesquisa</button>
     <button class="drawer-tab" data-tab="weather">Clima</button>
@@ -319,6 +320,49 @@
     </div>
     <div id="chat-list" class="chat-list">
       <div class="empty">Nenhuma conversa ainda.</div>
+    </div>
+  </div>
+
+  <!-- Mensagens tab (Telegram + WhatsApp side-by-side, espiao rapido sem trocar de aba) -->
+  <div class="drawer-panel" id="panel-messages">
+    <div class="panel-header">
+      <h3>Mensagens</h3>
+      <button class="panel-refresh" id="msg-reload" title="Recarregar Telegram + WhatsApp">↻ Recarregar</button>
+    </div>
+    <p class="panel-hint">
+      Visualização rápida. Para interagir (responder, mandar áudio), clique em
+      <strong>Expandir</strong> ou abra o app direto.
+      Status: <span id="msg-status" class="muted">aguardando primeiro carregamento…</span>
+    </p>
+    <div class="msg-grid">
+      <div class="msg-tile">
+        <header>
+          <span class="msg-icon">✈️</span>
+          <span class="msg-title">Telegram</span>
+          <a class="msg-open" href="https://web.telegram.org/a/" target="_blank" rel="noopener" title="Abrir Telegram Web em nova aba">↗</a>
+        </header>
+        <iframe
+          id="telegram-frame"
+          src="https://web.telegram.org/a/"
+          sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-downloads"
+          referrerpolicy="no-referrer"
+          loading="lazy"
+          title="Telegram Web"></iframe>
+      </div>
+      <div class="msg-tile">
+        <header>
+          <span class="msg-icon">💬</span>
+          <span class="msg-title">WhatsApp</span>
+          <a class="msg-open" href="https://web.whatsapp.com/" target="_blank" rel="noopener" title="Abrir WhatsApp Web em nova aba">↗</a>
+        </header>
+        <iframe
+          id="whatsapp-frame"
+          src="https://web.whatsapp.com/"
+          sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-downloads"
+          referrerpolicy="no-referrer"
+          loading="lazy"
+          title="WhatsApp Web"></iframe>
+      </div>
     </div>
   </div>
 
