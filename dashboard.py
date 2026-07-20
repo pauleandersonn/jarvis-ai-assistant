@@ -691,6 +691,25 @@ async def api_trade_webhook(payload: TradeWebhookPayload, request: Request) -> J
             status_code=401,
         )
 
+    # Rate-limit simples por IP (defesa contra flood externo).
+    # Max 30 requests / 60s por IP. Bots scanners vao bater nesse limite
+    # e receber 429 sem conseguir derrubar o dashboard.
+    import time as _t
+    client_ip = request.client.host if request.client else "unknown"
+    now = _t.time()
+    if not hasattr(api_trade_webhook, "_rl"):
+        api_trade_webhook._rl = {}
+    rl = api_trade_webhook._rl
+    bucket = rl.setdefault(client_ip, [])
+    bucket[:] = [ts for ts in bucket if now - ts < 60]
+    if len(bucket) >= 30:
+        LOG.warning("trade webhook rate-limit hit from %s", client_ip)
+        return JSONResponse(
+            {"ok": False, "error": "rate limit exceeded"},
+            status_code=429,
+        )
+    bucket.append(now)
+
     entry_id = str(uuid.uuid4())
     entry = {"id": entry_id, "received_at": datetime.now().isoformat(), **payload.model_dump()}
     TRADE_SIGNAL_BUFFER.append(entry)
@@ -1353,6 +1372,221 @@ import asyncio
 
 async def asyncio_sleep(seconds: float) -> None:
     await asyncio.sleep(seconds)
+
+
+# ---------- Briefing "cheguei em casa" ----------
+@app.get("/api/briefing/arrival")
+def briefing_arrival() -> JSONResponse:
+    """O que o JARVIS fala pro Paulo quando ele chega em casa.
+
+    Retorna texto natural (pt-BR) pronto pra TTS + estrutura com bullets
+    caso o frontend queira renderizar também. Lê o estado atual do
+    dashboard pra dar info em tempo real (sinais trade, agenda, email).
+
+    Pensado pra 2 cenários de uso:
+    1. TTS (voz pt-BR-AntonioNeural grave) via /api/tts/speak
+    2. Visual na aba 'Chegada' do drawer (futuro)
+    """
+    from datetime import datetime, timezone, timedelta
+
+    # Manaus = UTC-4 (sem DST)
+    manaus_tz = timezone(timedelta(hours=-4))
+    agora = datetime.now(manaus_tz)
+    hora = agora.hour
+
+    # 1) Saudação contextual
+    if 5 <= hora < 12:
+        saudacao = "Bom dia"
+        periodo = "manhã"
+    elif 12 <= hora < 18:
+        saudacao = "Boa tarde"
+        periodo = "tarde"
+    else:
+        saudacao = "Boa noite"
+        periodo = "noite"
+
+    # 2) Estado real do JARVIS (sinais trade recebidos)
+    try:
+        n_sinais = len(TRADE_SIGNAL_BUFFER)
+        ultimo_sinal = TRADE_SIGNAL_BUFFER[-1] if TRADE_SIGNAL_BUFFER else None
+        if ultimo_sinal:
+            ev = ultimo_sinal.get("event", "?")
+            ultimo_texto = (
+                f"Último evento às {str(ultimo_sinal.get('timestamp', '?'))[:16]}: "
+                f"{ev} - {ultimo_sinal.get('action', ultimo_sinal.get('summary', '?'))} "
+                f"em {ultimo_sinal.get('symbol', '-')}."
+            )
+        else:
+            ultimo_texto = "Sem sinais de trade hoje."
+    except (NameError, Exception):
+        n_sinais = 0
+        ultimo_texto = "Buffer de trade ainda não inicializado."
+
+    # 3) Próximo evento do Calendar (se houver)
+    proximo_evento_txt = "Sem compromissos nas próximas horas."
+    try:
+        from datetime import datetime as _dt
+        from Brain.actions import list_events as _list_events  # type: ignore
+        # Janela de 24h à frente
+        start_iso = agora.isoformat()
+        end_iso = (agora + timedelta(hours=24)).isoformat()
+        result = _list_events(time_min=start_iso, time_max=end_iso, max_results=3)
+        eventos = result.get("events", []) if isinstance(result, dict) else []
+        if eventos:
+            ev = eventos[0]
+            ev_start = ev.get("start", {}).get("dateTime", ev.get("start", {}).get("date", ""))
+            try:
+                ev_dt = _dt.fromisoformat(ev_start.replace("Z", "+00:00")).astimezone(manaus_tz)
+                ev_hora = ev_dt.strftime("%H:%M")
+            except Exception:
+                ev_hora = "horário indefinido"
+            proximo_evento_txt = (
+                f"Próximo compromisso: {ev.get('summary', 'sem título')} às {ev_hora}."
+            )
+    except Exception:
+        # Calendar pode não estar autenticado ainda — não bloqueia o briefing
+        pass
+
+    # 4) Pendências (lê do pc-runbook se existir)
+    pendencias = [
+        {
+            "id": "bot-financas-fly",
+            "titulo": "Bot Finanças 24/7 no Fly.io",
+            "prioridade": "alta",
+            "tempo_estimado": "15 min",
+            "acao": "Rodar setup-rapido.ps1 com 4 secrets (TELEGRAM_BOT_TOKEN novo, etc).",
+            "bloqueador": "Token Telegram precisa ser regenerado no @BotFather primeiro.",
+        },
+        {
+            "id": "trade-telegram-fix",
+            "titulo": "Telegram do bot trade (HTTP 401)",
+            "prioridade": "alta",
+            "tempo_estimado": "5 min",
+            "acao": "@BotFather → /mybots → @luaptrade_bot → /revoke → colar no .env.",
+            "bloqueador": "Precisa do celular em mãos.",
+        },
+        {
+            "id": "whatsapp-jarvis-mvp",
+            "titulo": "WhatsApp JARVIS — MVP ministerial",
+            "prioridade": "media",
+            "tempo_estimado": "1 fim de semana",
+            "acao": "Provisionar chip Vivo + Meta Business Manager + devocional diário.",
+            "bloqueador": "Aprovação Meta demora 1-3 dias.",
+        },
+        {
+            "id": "limpezas",
+            "titulo": "Limpezas opcionais",
+            "prioridade": "baixa",
+            "tempo_estimado": "5 min",
+            "acao": "Deletar JARVIS duplicata em Documents/PROGRAMAÇÃO/. Adicionar remote no day-trade-bot (se quiser publicar).",
+            "bloqueador": "nenhum",
+        },
+    ]
+
+    # 5) Recomendação do que fazer AGORA
+    # Lógica: se tiver token Telegram pendente, essa é a primeira coisa
+    # (bloqueia deploy Fly). Senão, deploy Fly. Senão, MVP WhatsApp.
+    proxima_acao = pendencias[1]  # Telegram (sempre primeiro — desbloqueia tudo)
+    proxima_acao_destaque = proxima_acao["acao"]
+
+    # 6) Monta texto corrido pro TTS (sem repetir a info de sinais)
+    if n_sinais > 0:
+        linha_trade = f"Recebi {n_sinais} sinais de trade hoje. {ultimo_texto}"
+    else:
+        linha_trade = "Ainda não recebi sinais de trade hoje."
+
+    texto_tts = (
+        f"{saudacao}, Paulo. "
+        f"Bem-vindo de volta. "
+        f"São {hora}h{agora.minute:02d} da {periodo} em Manaus. "
+        f"{proximo_evento_txt} "
+        f"{linha_trade} "
+        f"Tem três coisas paradas pra retomar. "
+        f"A mais urgente é o token do Telegram: você precisa abrir o BotFather "
+        f"no celular e regenerar o token do @luaptrade_bot. "
+        f"Depois disso, consegue fazer deploy do bot de Finanças no Fly em "
+        f"uns quinze minutos. "
+        f"Tem o roteiro completo no Obsidian, na nota PC Runbook 2026-07-20. "
+        f"Bom descanso. Se quiser, é só pedir e eu guio passo a passo."
+    )
+
+    return JSONResponse({
+        "saudacao": saudacao,
+        "periodo": periodo,
+        "hora_local": agora.strftime("%H:%M"),
+        "data_local": agora.strftime("%Y-%m-%d"),
+        "timezone": "America/Manaus (UTC-4)",
+        "proximo_evento": proximo_evento_txt,
+        "sinais_trade": {
+            "total_buffer": n_sinais,
+            "ultimo": ultimo_texto,
+        },
+        "pendencias": pendencias,
+        "proxima_acao_destaque": proxima_acao_destaque,
+        "texto_tts": texto_tts,
+        "gerado_em": agora.isoformat(),
+    })
+
+
+# ---------- Briefing "cheguei em casa" — versão ÁUDIO (TTS server-side) ----------
+@app.get("/api/briefing/arrival/audio")
+def briefing_arrival_audio() -> Response:
+    """Gera MP3 com o briefing em voz pt-BR-AntonioNeural (grave).
+
+    Usa Edge TTS (mesmo engine do jarvis-ai-assistant/.env). Retorna audio/mpeg
+    pronto pra tocar no navegador via <audio src="..."> ou download.
+
+    Padrão: voz 'pt-BR-AntonioNeural', rate -8%, pitch -4Hz (configurado em
+    jarvis-persona.md como a voz "do JARVIS" — grave, ministerial).
+    """
+    # Reutiliza a lógica do briefing textual (não duplica)
+    resp = briefing_arrival()
+    payload = json.loads(resp.body)
+    texto = payload["texto_tts"]
+
+    # Edge TTS em thread separada (nao conflita com o event loop do FastAPI).
+    # Usa temp file pq edge-tts tem API assincrona mas .save() simplifica.
+    import tempfile
+    import os as _os
+    try:
+        import edge_tts
+
+        async def _synth(out_path: str) -> int:
+            communicate = edge_tts.Communicate(
+                texto,
+                voice="pt-BR-AntonioNeural",
+                rate="-8%",
+                pitch="-4Hz",
+            )
+            await communicate.save(out_path)
+            return _os.path.getsize(out_path)
+
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tf:
+            tmp_path = tf.name
+        try:
+            import asyncio
+            size = asyncio.run(_synth(tmp_path))
+            with open(tmp_path, "rb") as fh:
+                audio_bytes = fh.read()
+        finally:
+            try:
+                _os.unlink(tmp_path)
+            except OSError:
+                pass
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"error": "TTS falhou", "detail": str(exc)},
+            status_code=500,
+        )
+
+    return Response(
+        content=audio_bytes,
+        media_type="audio/mpeg",
+        headers={
+            "Content-Disposition": 'inline; filename="briefing-chegada.mp3"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 # ---------- Entrypoint ----------
