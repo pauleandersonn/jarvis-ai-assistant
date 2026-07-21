@@ -251,6 +251,38 @@ via CLI sem precisar setar env no shell.
 
 ---
 
+## ✅ Frente 8: Integração `financas_bot → JARVIS` (concluída 20/07 22:35 BRT)
+
+**Contexto:** Paulo pediu pra "Conectar do Finanças bot ao Jarvis" após eu diagnosticar e ressuscitar o `financas_bot` (estava 52h offline). Setup seguiu skill `cross-service-webhook-shared-secret` a risca.
+
+**Stack adicionada:**
+- **Sender** `financas_bot/src/integrations/jarvis_webhook.py` (145 linhas) — `WebhookNotifier` com bearer token, fail-soft (rede down ≠ crash bot), timeout 5s, async wrapper `asyncio.to_thread`, singleton `get_jarvis_notifier()`.
+- **Hook** `src/services/transactions.py:182` — fire-and-forget `asyncio.create_task` que envia `transaction.confirmed` com `{transaction_id, user_id, amount_brl, category, description, tx_type, confidence}`.
+- **Receiver** `Brain/integrations/finance_webhook.py` (190 linhas) — `FinanceWebhookPayload` pydantic, ring buffer 50, fail-closed token validator (constant-time compare), rate-limit 120/min por IP, 3 handlers (POST webhook, GET recent, GET stats).
+- **Routes** em `dashboard.py` — 3x `app.add_api_route`, `ws_manager` injetado via `_fw_module.ws_manager = ws_manager` pra broadcast.
+- **Painel** `dashboard_static/radar.html` — ícone 💰 na sidebar (auto-ativa via `data-pane`), view-finance com 4 KPIs (buffer_size, total_brl, top_category, latest_event), lista de eventos com amount/categoria/descrição/timestamp, polling 5s, fail-soft se endpoint cair.
+
+**Tokens:** mesmo `secrets.token_urlsafe(32)` em ambos `.env` (`JARVIS_WEBHOOK_TOKEN` no financas_bot, `JARVIS_DASHBOARD_FINANCE_WEBHOOK_TOKEN` no JARVIS). Documentado em `.env.example`.
+
+**Smoke test 4/4 PASS:**
+- 401 sem Authorization
+- 401 com token errado
+- 200 com payload válido (id retornado)
+- 30 POSTs stress sem 429, buffer cap 50
+
+**End-to-end real:** evento `2336bc31-648c-4c86-ab89-0461ef55ab7e` enviado do `financas_bot` (Python in-process) e confirmado no JARVIS via `/recent`. Buffer atual: 32 eventos, total R$ 572.5.
+
+**Pitfalls AIOS identificados:**
+- `unset PYTHONPATH` no bash wrapper comeu `JARVIS_DASHBOARD_PORT` → fix permanente = usar `env -u PYTHONPATH VAR=val python ...`
+- Python 3.11 venv (hermes-agent) é o único com pydantic_core ABI correto + todas as deps
+- Import no meio do `dashboard.py` (após `app.post`) funciona, MAS módulos novos precisam existir ANTES do restart
+
+**Commit:** `e8e2f1d1 feat(finance): integra financas_bot -> JARVIS via webhook + painel de finanças no radar` (344 inserções, 3 arquivos).
+
+**Próximo passo opcional:** deploy Fly 24/7 (migração financas_bot pendente desde 18/07 — skill `fly-deploy-python-app-windows`).
+
+---
+
 ## Frente 7: Painel Visual estilo HA + Triple-sync ✅ CONCLUÍDA 20/07 19:55
 
 **Commits feitos hoje:**
