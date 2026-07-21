@@ -248,3 +248,33 @@ via CLI sem precisar setar env no shell.
    ```
 
 **Já tem no JARVIS (formato M5):** `Brain/integrations/whatsapp.py:send_signal_message()` — funciona pra WhatsApp Meta Cloud API.
+
+---
+
+## Frente 7: Painel Visual estilo HA + Triple-sync ✅ CONCLUÍDA 20/07 19:55
+
+**Commits feitos hoje:**
+- `7d5970a0` — Painel visual estilo HA com sidebar + 6 slots custom (781 linhas, 35KB)
+- `1b53c220` — Hardening: rate-limit 120/min + /api/health + CORS + workers env var
+
+**Onde tá:** `C:\Users\paule\Projects\jarvis-ai-assistant\dashboard_static\radar.html`
+
+**Como acessar:** `http://127.0.0.1:8788/radar` (com JARVIS rodando)
+
+**O que tem no painel:**
+- Sidebar HA-style 36x36 com 7 ícones verticais
+- 4 KPIs densos com borda colorida lateral (verde/cyan/violeta/vermelho)
+- 3 colunas com cards translúcidos (backdrop-filter)
+- Polling 5s em `/api/radar/dashboard` (snapshot consolidado trade+telegram+church)
+- 6 slots vazios clicáveis — adicionar sessão via modal (nome + 12 ícones preset + endpoint custom + cor)
+
+**Triple-sync ativo (3 camadas em dia):**
+- Layer 1: `Memory/*.md` (source of truth)
+- Layer 2: GitHub `pauleandersonn/jarvis-ai-assistant.git` — commits `7d5970a0` + `1b53c220` pushados
+- Layer 3: `C:\Users\paule\Documents\ObsidianVault\02-Projetos\JARVIS\Memory\` — 6 .md sincronizados via post-commit hook
+
+**Próximos opcionais:**
+- Deploy 24/7 no Fly.io (skill `fly-deploy-python-app-windows`)
+- Cron ministerial 8h Manaus (skill `radar-comunicacao-crista`)
+- Backend persistence sessions (substituir localStorage por SQLite)
+
