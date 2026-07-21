@@ -797,6 +797,42 @@ def api_trade_recent(limit: int = 20) -> JSONResponse:
     return JSONResponse({"count": len(recent), "events": recent})
 
 
+# ---------- Finance Webhook (financas_bot → JARVIS) ----------
+# Eventos de transação/oportunidade vindos do financas_bot.
+# Mesmo padrão cross-service-webhook-shared-secret (bearer + ring buffer).
+from Brain.integrations.finance_webhook import (
+    FinanceWebhookPayload,
+    FINANCE_EVENT_BUFFER,
+    FINANCE_EVENT_BUFFER_MAX,
+    post_finance_webhook,
+    get_finance_recent,
+    get_finance_stats,
+)
+# Injeta ws_manager no módulo finance_webhook pro broadcast funcionar
+import Brain.integrations.finance_webhook as _fw_module
+_fw_module.ws_manager = ws_manager
+
+app.add_api_route(
+    "/api/integrations/webhook/finance-event",
+    post_finance_webhook,
+    methods=["POST"],
+    response_model=None,
+)
+app.add_api_route(
+    "/api/integrations/finance/recent",
+    get_finance_recent,
+    methods=["GET"],
+    response_model=None,
+)
+app.add_api_route(
+    "/api/integrations/finance/stats",
+    get_finance_stats,
+    methods=["GET"],
+    response_model=None,
+)
+LOG.info("finance webhook routes mounted: POST /api/integrations/webhook/finance-event, GET /api/integrations/finance/{recent,stats}")
+
+
 # ---------- WhatsApp Cloud API (Meta) ----------
 # Webhook recebe eventos da Meta. Análise de oportunidades com LLM.
 # Doc: https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks

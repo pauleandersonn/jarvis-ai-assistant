@@ -68,6 +68,8 @@ html,body{background:var(--bg);color:var(--fg);font-family:'Inter','SF Pro Displ
 .kpi.tel .value{color:var(--cyan)}
 .kpi.church{border-left:2px solid var(--violet)}
 .kpi.church .value{color:var(--violet)}
+.kpi.finance{border-left:2px solid var(--green)}
+.kpi.finance .value{color:var(--green)}
 .kpi.alert{border-left:2px solid var(--red)}
 .kpi.alert .value{color:var(--red)}
 
@@ -211,6 +213,7 @@ footer a:hover{text-decoration:underline}
     <div class="sb-icon" data-pane="trade" title="Trade">📈</div>
     <div class="sb-icon" data-pane="tel" title="Telegram">📨</div>
     <div class="sb-icon" data-pane="church" title="Ministerial">⛪</div>
+    <div class="sb-icon" data-pane="finance" title="Finanças">💰</div>
     <div class="sb-spacer"></div>
     <div class="sb-icon" id="btn-refresh" title="Refresh">🔄</div>
     <div class="sb-icon" id="btn-mute" title="Som">🔔</div>
@@ -353,6 +356,40 @@ footer a:hover{text-decoration:underline}
         <div class="col" style="min-height:60vh">
           <div class="col-header"><h2><span class="ico">⛪</span> Radar Ministerial</h2><span class="count" id="church-count-big">0</span></div>
           <div class="col-body" id="church-body-big"></div>
+        </div>
+      </div>
+
+      <!-- VIEW: FINANCE ONLY (financas_bot integration) -->
+      <div class="view" id="view-finance">
+        <div class="kpis">
+          <div class="kpi finance" style="grid-column:span 1">
+            <div class="label">💰 Buffer ativo</div>
+            <div class="value" style="font-size:28px" id="kpi-finance-buffer">—</div>
+            <div class="sub" id="kpi-finance-buffer-sub">de 50 slots</div>
+          </div>
+          <div class="kpi finance" style="grid-column:span 1">
+            <div class="label">💸 Total movimentado</div>
+            <div class="value" style="font-size:28px" id="kpi-finance-total">R$ —</div>
+            <div class="sub" id="kpi-finance-total-sub">bufferizado</div>
+          </div>
+          <div class="kpi finance" style="grid-column:span 1">
+            <div class="label">🔥 Categoria top</div>
+            <div class="value" style="font-size:18px" id="kpi-finance-top-cat">—</div>
+            <div class="sub" id="kpi-finance-top-cat-sub">+ count</div>
+          </div>
+          <div class="kpi finance" style="grid-column:span 1">
+            <div class="label">⏱ Último evento</div>
+            <div class="value" style="font-size:16px" id="kpi-finance-latest">—</div>
+            <div class="sub" id="kpi-finance-latest-sub">—</div>
+          </div>
+        </div>
+
+        <div class="col" style="min-height:60vh">
+          <div class="col-header">
+            <h2><span class="ico">💰</span> Transações recentes</h2>
+            <span class="count" id="finance-count">0</span>
+          </div>
+          <div class="col-body" id="finance-body"></div>
         </div>
       </div>
 
@@ -616,10 +653,90 @@ async function refresh(){
     const data = await r.json();
     renderAll(data);
     await refreshCustomPanels();
+    await refreshFinance();
     document.getElementById('last-update').textContent = '↑ '+new Date().toLocaleTimeString('pt-BR');
   }catch(e){
     document.getElementById('last-update').textContent = '⚠️ '+e.message;
   }
+}
+
+// ===== Finance pane (financas_bot integration) =====
+async function refreshFinance(){
+  try {
+    const [recentRes, statsRes] = await Promise.all([
+      fetch('/api/integrations/finance/recent?limit=20&_='+Date.now(),{cache:'no-store'}),
+      fetch('/api/integrations/finance/stats?_='+Date.now(),{cache:'no-store'}),
+    ]);
+    if(!recentRes.ok || !statsRes.ok) throw new Error('HTTP '+(recentRes.status||statsRes.status));
+    const recent = await recentRes.json();
+    const stats  = await statsRes.json();
+    renderFinance(recent.events || [], stats);
+  } catch (e) {
+    // fail-soft: mostra msg no body, nao derruba o painel inteiro
+    const body = document.getElementById('finance-body');
+    if (body) body.innerHTML = '<div class="msg" style="color:var(--red);padding:12px">⚠️ finance webhook indisponível: '+escapeHtml(e.message)+'</div>';
+  }
+}
+
+function renderFinance(events, stats){
+  // KPIs
+  document.getElementById('kpi-finance-buffer').textContent = stats.buffer_size ?? 0;
+  document.getElementById('kpi-finance-buffer-sub').textContent = 'de '+(stats.buffer_cap ?? 50)+' slots';
+  document.getElementById('kpi-finance-total').textContent = 'R$ '+(stats.total_amount_brl_buffered ?? 0).toFixed(2);
+  document.getElementById('kpi-finance-total-sub').textContent = 'bufferizado';
+
+  // Top category (varre os eventos pq stats nao retorna)
+  const catCounts = {};
+  let topCat = '—', topCatCount = 0;
+  for (const ev of events) {
+    const c = ev.category || '(sem categoria)';
+    catCounts[c] = (catCounts[c]||0) + 1;
+    if (catCounts[c] > topCatCount) { topCat = c; topCatCount = catCounts[c]; }
+  }
+  document.getElementById('kpi-finance-top-cat').textContent = topCat;
+  document.getElementById('kpi-finance-top-cat-sub').textContent = topCatCount+' evento(s)';
+
+  // Latest event
+  if (events.length > 0) {
+    const last = events[0];
+    const amt = (typeof last.amount_brl === 'number') ? 'R$ '+last.amount_brl.toFixed(2) : 'R$ —';
+    document.getElementById('kpi-finance-latest').textContent = last.description || last.event_type;
+    const ts = last.occurred_at ? new Date(last.occurred_at).toLocaleTimeString('pt-BR') : '—';
+    document.getElementById('kpi-finance-latest-sub').textContent = amt+' · '+ts;
+  } else {
+    document.getElementById('kpi-finance-latest').textContent = '—';
+    document.getElementById('kpi-finance-latest-sub').textContent = 'buffer vazio';
+  }
+
+  // Lista de eventos
+  document.getElementById('finance-count').textContent = events.length;
+  const body = document.getElementById('finance-body');
+  if (!body) return;
+  if (events.length === 0) {
+    body.innerHTML = '<div class="msg" style="padding:24px;text-align:center;color:var(--muted)">Sem eventos ainda. Mande uma transação pro @fiannacas_paul_gaby_bot no Telegram.</div>';
+    return;
+  }
+  body.innerHTML = events.map(ev => {
+    const amt = (typeof ev.amount_brl === 'number') ? 'R$ '+ev.amount_brl.toFixed(2) : '';
+    const cat = ev.category || '';
+    const desc = ev.description || ev.event_type;
+    const ts = ev.occurred_at ? new Date(ev.occurred_at).toLocaleString('pt-BR', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}) : '';
+    const typeColor = ev.tx_type === 'income' ? 'var(--green)' : (ev.tx_type === 'expense' ? 'var(--red)' : 'var(--muted)');
+    return `
+      <div class="item" style="border-left:2px solid var(--green)">
+        <div class="row" style="display:flex;justify-content:space-between;align-items:center">
+          <div style="flex:1">
+            <div style="font-weight:700;color:#fff;font-size:12px">${escapeHtml(desc)}</div>
+            <div class="meta" style="font-size:10px;color:var(--dim);margin-top:2px">
+              ${cat ? '🏷 '+escapeHtml(cat)+' · ' : ''}
+              ${ev.tx_type ? '<span style="color:'+typeColor+'">'+escapeHtml(ev.tx_type)+'</span> · ' : ''}
+              ${ts}
+            </div>
+          </div>
+          <div style="font-weight:800;color:var(--green);font-size:14px;font-variant-numeric:tabular-nums">${amt}</div>
+        </div>
+      </div>`;
+  }).join('');
 }
 
 async function refreshCustomPanels(){
